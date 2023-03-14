@@ -1,0 +1,277 @@
+from typing import Optional, List, Any, Callable
+
+import torch
+import threading
+import numpy as np
+import matplotlib.pyplot as plt
+
+from ..utils.base import RegressionModel
+
+from sklearn.ensemble._base import _partition_estimators
+from sklearn.utils.parallel import delayed, Parallel
+from sklearn.utils.validation import check_is_fitted
+from sklearn.ensemble import RandomForestRegressor
+
+from botorch.models.model import Model
+from botorch.acquisition import AcquisitionFunction
+from botorch.posteriors import Posterior
+from botorch.posteriors.torch import TorchPosterior
+from botorch.acquisition.objective import PosteriorTransform
+
+
+def _accumulate_prediction(predict, X, out, lock):
+    """
+    This is a utility function for joblib's Parallel.
+    It can't go locally in ForestClassifier or ForestRegressor, because joblib
+    complains that it cannot pickle it when placed there.
+    """
+    prediction = predict(X, check_input=False)
+    with lock:
+        if len(out) == 1:
+            out[0] = prediction
+        else:
+            for i in range(len(out)):
+                out[i] = prediction[i]
+
+
+class RandomForestWrapper(RandomForestRegressor, Model, RegressionModel):
+    def __init__(
+        self,
+        n_estimators=100,
+        *,  # force named
+        criterion="squared_error",
+        max_depth=None,
+        min_samples_split=2,
+        min_samples_leaf=1,
+        min_weight_fraction_leaf=0.0,
+        max_features=1.0,
+        max_leaf_nodes=None,
+        min_impurity_decrease=0.0,
+        bootstrap=True,
+        oob_score=False,
+        n_jobs=None,
+        random_state=None,
+        verbose=0,
+        warm_start=False,
+        ccp_alpha=0.0,
+        max_samples=None,
+        num_outputs=1,
+    ):
+        RandomForestRegressor.__init__(
+            self,
+            n_estimators=n_estimators,
+            criterion=criterion,
+            max_depth=max_depth,
+            min_samples_split=min_samples_split,
+            min_samples_leaf=min_samples_leaf,
+            min_weight_fraction_leaf=min_weight_fraction_leaf,
+            max_features=max_features,
+            max_leaf_nodes=max_leaf_nodes,
+            min_impurity_decrease=min_impurity_decrease,
+            bootstrap=bootstrap,
+            oob_score=oob_score,
+            n_jobs=n_jobs,
+            random_state=random_state,
+            verbose=verbose,
+            warm_start=warm_start,
+            ccp_alpha=ccp_alpha,
+            max_samples=max_samples,
+        )
+        Model.__init__(self)
+        self._num_outputs = num_outputs
+        self._with_grad = False
+
+    @property
+    def with_grad(self) -> bool:
+        return self._with_grad
+
+    @property
+    def num_outputs(self) -> int:
+        return self._num_outputs
+
+    def fit(self, X, y, sample_weight=None):
+        """
+        Fit the Random Forest Regressor model.
+
+        Args:
+            X:
+            y:
+            sample_weight:
+
+        Returns:
+
+        """
+        y = y.ravel()
+        return RandomForestRegressor.fit(self, X, y, sample_weight)
+
+    def subset_output(self, idcs: List[int]) -> Model:
+        pass
+
+    def condition_on_observations(self, X: torch.Tensor, Y: torch.Tensor, **kwargs: Any) -> Model:
+        pass
+
+    def get_estimated_std(self, x_train: torch.Tensor) -> torch.Tensor:
+        return torch.std(self._get_regression_targets(x_train), dim=-1).unsqueeze(-1)
+
+    def posterior(
+        self,
+        X: torch.Tensor,
+        output_indices: Optional[List[int]] = None,
+        observation_noise: bool = False,
+        posterior_transform: Optional[PosteriorTransform] = None,
+        **kwargs: Any,
+    ) -> Posterior:
+        """
+        Wraps the posterior distribution of the Random Forest Regressor into a Torch Posterior.
+
+        Parameters
+        ----------
+         X: A `b x q x d`-dim Tensor, where `d` is the dimension of the
+            feature space, `q` is the number of points considered jointly,
+            and `b` is the batch dimension.
+        output_indices: A list of indices, corresponding to the outputs over
+            which to compute the posterior (if the model is multi-output).
+            Can be used to speed up computation if only a subset of the
+            model's outputs are required for optimization. If omitted,
+            computes the posterior over all model outputs.
+        observation_noise: If True, add observation noise to the posterior.
+        posterior_transform: An optional PosteriorTransform.
+        Returns
+        -------
+            A `Posterior` object, representing a batch of `b` joint distributions
+            over `q` points and `m` outputs each.
+        """
+        regression_targets = self._get_regression_targets(X)
+        target_mean = torch.mean(regression_targets, dim=-1).unsqueeze(0)
+        target_variance = torch.var(regression_targets, dim=-1)
+        target_matrix = target_variance * torch.eye(target_variance.shape[0])
+
+        mvn = torch.distributions.multivariate_normal.MultivariateNormal(
+            loc=target_mean, covariance_matrix=target_matrix,
+        )
+
+        return TorchPosterior(distribution=mvn)
+
+    def _get_regression_targets(self, X: torch.Tensor):
+        """
+        Gather all predict regression targets of the trees in the forest for X.
+        The predicted regression target of an input sample is computed as the
+
+        Parameters
+        ----------
+        X (np.ndarray): of shape (n_samples, n_features)
+            The input samples. Internally, its dtype will be converted to
+            ``dtype=np.float32``. If a sparse matrix is provided, it will be
+            converted into a sparse ``csr_matrix``.
+        Returns
+        -------
+        y : ndarray of shape (n_samples, n_estimators,) or (n_samples, n_outputs, n_estimators)
+            The predicted regression targets.
+        """
+        check_is_fitted(self)
+        # Check data
+
+        if torch.is_tensor(X):
+            X = X.detach().numpy()
+
+        try:
+            X = self._validate_X_predict(X)
+        except ValueError:
+            X = X[..., 0]
+
+        X = X.astype(dtype=np.float32)
+
+        # Assign chunks of trees to jobs
+        n_jobs, _, _ = _partition_estimators(self.n_estimators, self.n_jobs)
+
+        # Assign storage for the estimators
+        if self.n_outputs_ > 1:
+            y_hat = np.zeros((X.shape[0], self.n_outputs_, self.n_estimators), dtype=np.float64)
+        else:
+            y_hat = np.zeros((X.shape[0], self.n_estimators), dtype=np.float64)
+
+        # Parallel loop
+        lock = threading.Lock()
+        Parallel(n_jobs=n_jobs, verbose=self.verbose, require="sharedmem")(
+            delayed(_accumulate_prediction)(e.predict, X, y_hat[..., i], lock) for i, e in enumerate(self.estimators_)
+        )
+        return torch.tensor(y_hat)
+
+    def plot(
+        self,
+        x_train: torch.Tensor,
+        y_train: torch.Tensor,
+        var_true: Callable,
+        f: Callable,
+        domain: np.ndarray,
+        maximum: float,
+        acquisition_function: Optional[AcquisitionFunction] = None,
+    ) -> None:
+        """
+        Plot the fitted gaussian process, the corresponding training data and the objective function.
+
+        Args:
+            x_train (torch.Tensor): A `batch_shape x n x d` tensor of training features.
+            y_train (torch.Tensor): A `batch_shape x n x m` tensor of training observations.
+            var_true (Callable): The true variance function.
+            f (Callable): The objective function.
+            domain (np.ndarray): The domain of the objective function.
+            maximum (float): The x-coordinate that corresponds to the maximum of the objective function.
+            acquisition_function (Optional[AcquisitionFunction]): The acquisition function.
+
+        Returns:
+            None
+        """
+        domain = domain.astype(int)
+
+        # unwrap the domain for easy plotting
+        plot_domain = [domain[0][0], domain[1][0]]
+
+        x_test = np.expand_dims(np.linspace(plot_domain[0], plot_domain[1], 1000), 1)
+        regression_targets = self._get_regression_targets(torch.tensor(x_test))
+        posterior_mean = torch.mean(regression_targets, dim=-1)
+        posterior_std = torch.std(regression_targets, dim=-1)
+        lower = posterior_mean - 1.96 * posterior_std
+        upper = posterior_mean + 1.96 * posterior_std
+
+        ax0 = plt.subplot2grid((2, 2), (0, 0), colspan=2)
+        ax1 = plt.subplot2grid((2, 2), (1, 0))
+        ax2 = plt.subplot2grid((2, 2), (1, 1))
+
+        ax0.plot(x_train, y_train, "kx", mew=2, label="observed data")
+        ax0.plot(x_test, posterior_mean, label="Mean posterior distribution")
+        ax0.fill_between(
+            x_test.squeeze(), lower, upper, alpha=0.2, label="confidence interval (1.96σ)",
+        )
+        ax0.axvline(maximum, color="r", linewidth=0.3, label="global maximum")
+        ax0.plot(x_test, f(x_test), color="black", linestyle="dashed", linewidth=0.6, label="f(x)")
+        ax0.set_title(f"Random Forest regression")
+
+        if acquisition_function is not None:
+            # plot the acquisition function
+            ax0.plot(
+                x_test.squeeze(),
+                acquisition_function.forward(torch.tensor(x_test).unsqueeze(-1)).detach(),
+                label="acquisition function",
+                alpha=0.6,
+                linewidth=0.5
+            )
+
+        ax0.legend(bbox_to_anchor=(1.01, 0.0), loc="lower left", ncols=1, borderaxespad=0.0)
+        ax0.set_xlabel("x")
+        ax0.set_ylabel("y")
+
+        ax1.plot(
+            x_test, posterior_std, label="estimated observed variance",
+        )
+        ax1.set_title("estimated observed standard deviation")
+        ax1.set_xlabel("x")
+        ax1.set_xticks(np.linspace(plot_domain[0], plot_domain[1], (plot_domain[1] - plot_domain[0]) // 2 + 1))
+        ax1.set_ylabel("var(y)")
+
+        ax2.plot(x_test, var_true(x_test), label="true std")
+        ax2.set_title("true standard deviation")
+        ax2.set_xlabel("x")
+        ax2.set_xticks(np.linspace(plot_domain[0], plot_domain[1], (plot_domain[1] - plot_domain[0]) // 2 + 1))
+        plt.tight_layout()
+        plt.show()
