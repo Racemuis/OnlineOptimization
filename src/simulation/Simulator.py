@@ -10,12 +10,19 @@ import matplotlib.pyplot as plt
 from matplotlib import cm
 
 
-@dataclass(frozen=True)
 class Simulator(Source):
     """Simulator of an unknown objective function."""
 
-    _objective_function: ObjectiveFunction
-    _noise_function: Callable
+    def __init__(self, objective_function: ObjectiveFunction, noise_function: Callable):
+        self._objective_function = objective_function
+        self._noise_function = noise_function
+        self._dimension = (
+            self._objective_function.domain.shape[-1] if len(self._objective_function.domain.shape) > 1 else 1
+        )
+
+    @property
+    def dimension(self):
+        return self._dimension
 
     @property
     def noise_function(self):
@@ -37,14 +44,12 @@ class Simulator(Source):
         """
         domain = self.objective_function.domain
         fig, ax, color = utils.setup_simulation_plot(
-            n_simulations=n_simulations,
-            objective_function=self.objective_function,
-            cmap=cm.Reds,
+            n_simulations=n_simulations, objective_function=self.objective_function, cmap=cm.Reds,
         )
         for i, c in enumerate(color):
             sample_x = np.random.uniform(low=domain[0], high=domain[1])
             sample_y = self.sample(x=sample_x)
-            ax.scatter(x=sample_x, y=sample_y, color=c, marker="X", edgecolors='black')
+            ax.scatter(x=sample_x, y=sample_y, color=c, marker="X", edgecolors="black")
             plt.draw()
             plt.pause(0.75)
         plt.show()
@@ -61,7 +66,8 @@ class Simulator(Source):
             Union[float, np.ndarray]: The value of the (noisy) objective function at `x`.
         """
         f_x = self.objective_function.evaluate(x=x)
-        scale = self.noise_function(x)
+        scale_x = x[:, 0] if self._dimension > 1 else x
+        scale = np.abs(self.noise_function(scale_x))
         y_x = np.random.normal(loc=f_x, scale=scale)
         if info:
             print(f"Evaluated: x = {x}\n\tf(x) = {f_x}\n\ty(x) = {y_x}")
@@ -77,6 +83,4 @@ class Simulator(Source):
         return self.objective_function.domain
 
     def __str__(self) -> str:
-        return (
-            f"Simulator of an unknown objective function '{self.objective_function.name}' with noise."
-        )
+        return f"Simulator of an unknown objective function '{self.objective_function.name}' with noise."
