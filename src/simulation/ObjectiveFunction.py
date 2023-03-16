@@ -5,13 +5,17 @@ import scipy
 import numpy as np
 
 
-@dataclass(frozen=True)
 class ObjectiveFunction:
     """An objective function class"""
-
-    name: str
-    f: Callable[[Union[float, np.ndarray]], Union[float, np.ndarray]]
-    domain: Optional[np.ndarray] = np.array([0, 10], dtype=float)
+    def __init__(
+        self,
+        name: str,
+        f: Callable[[Union[float, np.ndarray]], Union[float, np.ndarray]],
+        domain: Optional[np.ndarray] = np.array([0, 10], dtype=float),
+    ):
+        self.name = name
+        self.f = f
+        self.domain = domain
 
     def evaluate(self, x: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
         """
@@ -42,4 +46,4 @@ class ObjectiveFunction:
         return 0
 
     def __str__(self):
-        return f"Objective function \'{self.name}\':\ndomain:\t{list(self.domain)}\noptimum:{self.get_maximum()}"
+        return f"Objective function '{self.name}':\ndomain:\t{list(self.domain)}\noptimum:{self.get_maximum()}"
