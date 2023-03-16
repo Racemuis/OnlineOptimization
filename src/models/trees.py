@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 
 from ..utils.base import RegressionModel
 
+from sklearn.tree import DecisionTreeRegressor
 from sklearn.ensemble._base import _partition_estimators
 from sklearn.utils.parallel import delayed, Parallel
 from sklearn.utils.validation import check_is_fitted
@@ -34,7 +35,31 @@ def _accumulate_prediction(predict, X, out, lock):
                 out[i] = prediction[i]
 
 
+def _accumulate_variance(estimator: DecisionTreeRegressor, X: np.ndarray, out: np.ndarray, lock: threading.Lock):
+    """
+    This is a utility function for joblib's Parallel.
+    It can't go locally in ForestClassifier or ForestRegressor, because joblib
+    complains that it cannot pickle it when placed there.
+    """
+    assert len(out) == 1, f"The output should be a wrapped float, and therefore len(out) == 1. Received {len(out)}"
+    # get the leaf indices for each training sample
+    leaves_indices = estimator.apply(X)
+    Y = estimator.predict(X)
+
+    leaves = np.unique(leaves_indices)
+    var_leaf = np.empty(leaves.shape)
+
+    # group the training samples per leaf
+    for i, leaf in enumerate(leaves):
+        var_leaf[i] = np.var(Y[leaves_indices == leaf])
+
+    var_tree = np.mean(var_leaf)
+    with lock:
+        out[0] = var_tree
+
+
 class RandomForestWrapper(RandomForestRegressor, Model, RegressionModel):
+    """ A wrapper class that adds an estimation of a posterior distribution to the sklearn RandomForestRegressor"""
     def __init__(
         self,
         n_estimators=100,
@@ -56,6 +81,7 @@ class RandomForestWrapper(RandomForestRegressor, Model, RegressionModel):
         ccp_alpha=0.0,
         max_samples=None,
         num_outputs=1,
+        min_variance=0.01,
     ):
         RandomForestRegressor.__init__(
             self,
@@ -79,6 +105,7 @@ class RandomForestWrapper(RandomForestRegressor, Model, RegressionModel):
         )
         Model.__init__(self)
         self._num_outputs = num_outputs
+        self.min_variance = min_variance
         self._with_grad = False
 
     @property
@@ -89,17 +116,17 @@ class RandomForestWrapper(RandomForestRegressor, Model, RegressionModel):
     def num_outputs(self) -> int:
         return self._num_outputs
 
-    def fit(self, X, y, sample_weight=None):
+    def fit(self, X: np.ndarray, y: np.ndarray, sample_weight=None):
         """
         Fit the Random Forest Regressor model.
 
         Args:
-            X:
-            y:
-            sample_weight:
+            X (np.ndarray): The training input samples.
+            y (np.ndarray): The target values.
+            sample_weight (Any): The sample weights. If None, then the samples are equally weighted.
 
         Returns:
-
+            object: The fitted RandomForestWrapper instance.
         """
         y = y.ravel()
         return RandomForestRegressor.fit(self, X, y, sample_weight)
@@ -124,6 +151,16 @@ class RandomForestWrapper(RandomForestRegressor, Model, RegressionModel):
         """
         Wraps the posterior distribution of the Random Forest Regressor into a Torch Posterior.
 
+        The posterior distribution of a Random Forest Regression model is estimated using the method proposed in
+        [1, p16].
+
+        [1] Frank Hutter, Lin Xu, Holger H. Hoos, Kevin Leyton-Brown, Algorithm runtime prediction:
+        Methods & evaluation, Artificial Intelligence, Volume 206, 2014, Pages 79-111, ISSN 0004-3702,
+        https://doi.org/10.1016/j.artint.2013.10.003.
+
+        TODO: This function starts two parallel processes that involve the base-estimators of the forest, these
+          processes can be wrapped into a single process to speed up the computation.
+
         Parameters
         ----------
          X: A `b x q x d`-dim Tensor, where `d` is the dimension of the
@@ -142,9 +179,21 @@ class RandomForestWrapper(RandomForestRegressor, Model, RegressionModel):
             over `q` points and `m` outputs each.
         """
         regression_targets = self._get_regression_targets(X)
+
+        # calculate the posterior mean
         target_mean = torch.mean(regression_targets, dim=-1).unsqueeze(0)
-        target_variance = torch.var(regression_targets, dim=-1)
-        target_matrix = target_variance * torch.eye(target_variance.shape[0])
+
+        # calculate the posterior variance
+        variance_within_predictions = self._get_empirical_variance(X)
+        # decomposed law of total variance
+        variance_vector = (torch.mean(
+            torch.pow(regression_targets, 2) + torch.pow(variance_within_predictions, 2), dim=-1
+        ) - torch.pow(target_mean, 2)).squeeze()
+
+        variance_vector = self.bound_variance(variance_vector)
+        # variance_across_predictions = torch.var(regression_targets, dim=-1)
+        # target_matrix = variance_across_predictions * torch.eye(variance_across_predictions.shape[0])
+        target_matrix = variance_vector * torch.eye(variance_vector.shape[0])
 
         mvn = torch.distributions.multivariate_normal.MultivariateNormal(
             loc=target_mean, covariance_matrix=target_matrix,
@@ -152,9 +201,24 @@ class RandomForestWrapper(RandomForestRegressor, Model, RegressionModel):
 
         return TorchPosterior(distribution=mvn)
 
-    def _get_regression_targets(self, X: torch.Tensor):
+    def bound_variance(self, variance_vector: torch.Tensor):
         """
-        Gather all predict regression targets of the trees in the forest for X.
+        Set a minimum on the variance to avoid numerical instabilities.
+
+        Args:
+            variance_vector (torch.Tensor): The estimated variance that should be bounded.
+
+        Returns:
+            torch.Tensor: The bounded estimated variance vector.
+        """
+        for i, var in enumerate(variance_vector):
+            if var < self.min_variance:
+                variance_vector[i] = self.min_variance
+        return variance_vector
+
+    def _get_empirical_variance(self, X: torch.Tensor):
+        """
+        Gather the mean variance within each tree in the forest for X. This is the average of the variance per leaf.
         The predicted regression target of an input sample is computed as the
 
         Parameters
@@ -170,15 +234,60 @@ class RandomForestWrapper(RandomForestRegressor, Model, RegressionModel):
         """
         check_is_fitted(self)
         # Check data
-
         if torch.is_tensor(X):
             X = X.detach().numpy()
 
-        try:
-            X = self._validate_X_predict(X)
-        except ValueError:
-            X = X[..., 0]
+        # set the data shape to [n_samples, n_dimensions] i.e., remove the q dimension from botorch
+        if len(X.shape) > 2:
+            X = X[:, 0, :]
 
+        X = self._validate_X_predict(X)
+        X = X.astype(dtype=np.float32)
+
+        # Assign chunks of trees to jobs
+        n_jobs, _, _ = _partition_estimators(self.n_estimators, self.n_jobs)
+
+        # Assign storage for the estimators
+        if self.n_outputs_ > 1:
+            y_hat = np.zeros((1, self.n_outputs_, self.n_estimators), dtype=np.float64)
+        else:
+            y_hat = np.zeros((1, self.n_estimators), dtype=np.float64)
+
+        # Parallel loop
+        lock = threading.Lock()
+        Parallel(n_jobs=n_jobs, verbose=self.verbose, require="sharedmem")(
+            delayed(_accumulate_variance)(e, X, y_hat[..., i], lock) for i, e in enumerate(self.estimators_)
+        )
+        return torch.tensor(y_hat)
+
+    def _get_regression_targets(self, X: torch.Tensor):
+        """
+        Gather all predicted regression targets of the trees in the forest for X.
+        The predicted regression target of an input sample is computed as the mean prediction of all the single
+        estimators in the forsest.
+
+        Parameters
+        ----------
+        X (np.ndarray): of shape (n_samples, n_features)
+            The input samples. Internally, its dtype will be converted to
+            ``dtype=np.float32``. If a sparse matrix is provided, it will be
+            converted into a sparse ``csr_matrix``.
+        Returns
+        -------
+        y : ndarray of shape (n_samples, n_estimators,) or (n_samples, n_outputs, n_estimators)
+            The predicted regression targets.
+        """
+        check_is_fitted(self)
+
+        # Check data
+        if torch.is_tensor(X):
+            X = X.detach().numpy()
+
+        # set the data shape to [n_samples, n_dimensions] i.e., remove the q dimension from botorch
+        if len(X.shape) > 2:
+            X = X[:, 0, :]
+
+        X = self._validate_X_predict(X)
         X = X.astype(dtype=np.float32)
 
         # Assign chunks of trees to jobs
@@ -254,7 +363,7 @@ class RandomForestWrapper(RandomForestRegressor, Model, RegressionModel):
                 acquisition_function.forward(torch.tensor(x_test).unsqueeze(-1)).detach(),
                 label="acquisition function",
                 alpha=0.6,
-                linewidth=0.5
+                linewidth=0.5,
             )
 
         ax0.legend(bbox_to_anchor=(1.01, 0.0), loc="lower left", ncols=1, borderaxespad=0.0)

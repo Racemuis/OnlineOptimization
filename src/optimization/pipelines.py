@@ -41,7 +41,7 @@ class BayesOptPipeline:
         self.selector = selector
 
     def optimize(
-        self, source: Source, informed_sample_size: int, plot: Optional[bool] = False
+        self, source: Source, informed_sample_size: int, plot: Optional[bool] = False, verbose: Optional[bool] = False,
     ) -> Union[float, np.ndarray]:
         """
         Perform Bayesian optimization on the ``source`` with ``informed_sample_size`` number of samples.
@@ -50,13 +50,16 @@ class BayesOptPipeline:
             source (Source): A source where samples can be taken from.
             informed_sample_size (int): The number of informed samples to take.
             plot (Optional[bool]): True if the optimization process should be plotted.
+            verbose (Optional[bool]): True if intermediate samples should be pasted on standardout.
 
         Returns:
             Union[float, np.ndarray]: The optimal coordinates found by the Bayesian optimization process.
         """
+        intermediate_results = np.empty((informed_sample_size, source.dimension))
+
         # Bayesian optimization - phase 1: Random sampling
         x_train = self.initialization.forward()
-        y_train = torch.tensor(source.sample(x=x_train[:, 0].numpy())).unsqueeze(1)
+        y_train = torch.tensor(source.sample(x=x_train.numpy().squeeze())).unsqueeze(1)
 
         # Bayesian optimization - phase 2: informed sampling
         for i in range(informed_sample_size):
@@ -65,12 +68,15 @@ class BayesOptPipeline:
             # Update training data
             x_train = torch.cat((x_train, x_sample))
             y_train = torch.cat((y_train, y_sample))
-            print(f"Iteration {i} - suggested candidate for maximum: {x_sample[0, 0]:.2f}.")
 
-        selector = self.selector(
-            model=self.regression_model.get_model(),
-            estimated_variance=self.regression_model.get_estimated_std(x_train=x_train).cpu().detach(),
-        )
+            if verbose:
+                print(f"Iteration {i} - suggested candidate for maximum: {x_sample[0, 0]:.2f}.")
+
+            selector = self.selector(
+                model=self.regression_model.get_model(),
+                estimated_variance=self.regression_model.get_estimated_std(x_train=x_train).cpu().detach(),
+            )
+            intermediate_results[i, :] = selector.forward(x_train=x_train, y_train=y_train)
 
         if plot:
             self.regression_model.plot(
@@ -85,7 +91,7 @@ class BayesOptPipeline:
                 ),
             )
 
-        return selector.forward(x_train=x_train, y_train=y_train)
+        return intermediate_results
 
     def _optimization_step(
         self, x_train: torch.Tensor, y_train: torch.Tensor, source: Source,
@@ -115,5 +121,4 @@ class BayesOptPipeline:
             acq_function=acq_function, bounds=bounds, q=1, num_restarts=5, raw_samples=20, options=options
         )
         y_sample = torch.tensor(source.sample(x=x_sample.numpy()))
-
-        return x_sample, y_sample
+        return x_sample, torch.tensor([[y_sample.item()]])

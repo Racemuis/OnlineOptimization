@@ -67,6 +67,7 @@ class Random(AcquisitionFunction):
     def __init__(self, size: int, domain: np.ndarray):
         self.size = size
         self.domain = domain
+        self.dimension = self.domain.shape[-1]
         super().__init__(None)
 
     def forward(self, x: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -80,8 +81,14 @@ class Random(AcquisitionFunction):
         Returns:
             Tensor: A tensor of the `self.size` random samples, wrapped in the shape n_batches x n_samples x n_dims
         """
-        samples = np.random.uniform(low=self.domain[0], high=self.domain[1], size=self.size)
-        return torch.from_numpy(samples).unsqueeze(1)
+        if self.dimension == 1:
+            samples = np.random.uniform(low=self.domain[0], high=self.domain[1], size=self.size)
+            return torch.from_numpy(samples).unsqueeze(1)
+        else:
+            samples = np.empty((self.size, self.dimension))
+            for i in range(self.dimension):
+                samples[:, i] = np.random.uniform(low=self.domain[0, i], high=self.domain[1, i], size=self.size)
+            return torch.from_numpy(samples)
 
 
 class Sobol(AcquisitionFunction):
