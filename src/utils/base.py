@@ -12,6 +12,10 @@ class Source(ABC):
         pass
 
     @property
+    def dimension(self):
+        ...
+
+    @property
     @abstractmethod
     def noise_function(self):
         ...
