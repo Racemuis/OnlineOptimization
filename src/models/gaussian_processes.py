@@ -17,6 +17,7 @@ from botorch.models.transforms.input import InputTransform
 from botorch.models.transforms.outcome import OutcomeTransform
 
 from gpytorch import ExactMarginalLogLikelihood
+from gpytorch import Module
 
 
 from gpytorch.priors.torch_priors import GammaPrior
@@ -60,6 +61,7 @@ class MostLikelyHeteroskedasticGP(RegressionModel):
         self._composite_model = None
         self._noise_model = None
         self.is_trained = False
+        self.log_noise = False
         self._with_grad = True
 
     @property
@@ -114,20 +116,7 @@ class MostLikelyHeteroskedasticGP(RegressionModel):
                 z = torch.pow(g1.posterior(x_train).mean - y_train, 2)
 
             # Estimate g2 on the new dataset (noise model)
-            g2 = SingleTaskGP(
-                train_X=x_train,
-                train_Y=z,
-                input_transform=self.input_transform,
-                outcome_transform=self.outcome_transform,
-                covar_module=covar_module,
-            )
-            g2.likelihood.noise_covar.register_constraint("raw_noise", GreaterThan(1e-5))
-            mll_g2 = ExactMarginalLogLikelihood(likelihood=g2.likelihood, model=g2)
-            mll_g2 = mll_g2.to(x_train)
-
-            # Fit g2
-            g2.train()
-            _ = fit_gpytorch_mll(mll_g2)
+            g2 = self.train_noise_model(covar_module, x_train, z)
 
             # Predict the empirical noise levels using g2
             g2.eval()
@@ -139,19 +128,19 @@ class MostLikelyHeteroskedasticGP(RegressionModel):
             #  high variances
 
             if train_y_var.lt(0).any():
+                self.log_noise = True
                 warnings.warn(
                     f"The estimated empirical variances have become too small, which causes them to be negative"
-                    f" due to numerical instability. Ceasing EM algorithm at iteration {i + 1}."
+                    f", training g2 on log variance instead."
                 )
-                if g3 is None:
-                    g3 = SingleTaskGP(
-                        train_X=x_train,
-                        train_Y=y_train,
-                        input_transform=self.input_transform,
-                        outcome_transform=self.outcome_transform,
-                    )
-                    _ = ExactMarginalLogLikelihood(likelihood=g3.likelihood, model=g3)
-                break
+
+                # Estimate g2 on the new dataset (noise model)
+                g2 = self.train_noise_model(covar_module, x_train, torch.log(z))
+
+                # Predict the empirical noise levels using g2
+                g2.eval()
+                with torch.no_grad():
+                    train_y_var = torch.exp(g2.posterior(x_train).mean)
 
             # Estimate the combined GP g3
             g3 = FixedNoiseGP(
@@ -190,6 +179,33 @@ class MostLikelyHeteroskedasticGP(RegressionModel):
 
         return g3
 
+    def train_noise_model(self, covar_module: Module, x_train: torch.Tensor, z: torch.Tensor) -> SingleTaskGP:
+        """
+        Train a noise model given the input and noise levels.
+
+        Args:
+            covar_module (Module): The kernel for the noise model.
+            x_train (torch.Tensor): The x-coordinates of the input.
+            z (torch.Tensor): The noise levels that are associated with the x-coordinates.
+
+        Returns:
+            SingleTaskGP: A trained noise model (in training mode).
+        """
+        g2 = SingleTaskGP(
+            train_X=x_train,
+            train_Y=z,
+            input_transform=self.input_transform,
+            outcome_transform=self.outcome_transform,
+            covar_module=covar_module,
+        )
+        # g2.likelihood.noise_covar.register_constraint("raw_noise", GreaterThan(1e-5))
+        mll_g2 = ExactMarginalLogLikelihood(likelihood=g2.likelihood, model=g2)
+        mll_g2 = mll_g2.to(x_train)
+        # Fit g2
+        g2.train()
+        _ = fit_gpytorch_mll(mll_g2)
+        return g2
+
     def get_noise_model(self) -> SingleTaskGP:
         """
         Getter function for the noise model.
@@ -214,7 +230,10 @@ class MostLikelyHeteroskedasticGP(RegressionModel):
         return self._composite_model
 
     def get_estimated_std(self, x_train: torch.Tensor) -> torch.Tensor:
-        return torch.sqrt(self.get_noise_model().posterior(x_train).mean)
+        if self.log_noise:
+            return torch.sqrt(torch.exp(self.get_noise_model().posterior(x_train).mean))
+        else:
+            return torch.sqrt(self.get_noise_model().posterior(x_train).mean)
 
     def plot(
         self,
@@ -277,7 +296,7 @@ class MostLikelyHeteroskedasticGP(RegressionModel):
 
         ax1.plot(
             x_test.numpy(),
-            np.sqrt(noise_model.posterior(x_test).mean.cpu().detach().numpy()),
+            self.get_estimated_std(x_train=x_test).cpu().detach().numpy(),
             label="estimated observed standard deviation",
         )
         ax1.set_title("estimated observed standard deviation")
