@@ -15,7 +15,7 @@ This repository provides an implementation of an optimization pipeline, which ai
 ### General problem domain
 Suppose that we would like to optimize a function $f(x)$ for which there is neither information about the gradient, nor an analytical expression for the optimum available. Furthermore, consider that the evaluation of $f(x)$ is _noisy_, i.e.
 
-$$y(x) = f(x) + \mathcal(N)(0, \varepsilon)$$
+$$y(x) = f(x) + \mathcal{N}(0, \varepsilon)$$
 
 where $y(x)$ is the evaluated value for the parameters $x$, and $\varepsilon$ is the unknown variance of the (normally) distributed noise that is superimposed on our objective function $f(x)$. If $f(x)$ is expensive to evaluate, we wish to make the search for the optimal values of $x$ as effective as possible. To that end, (different variations) of **Bayesian optimization** and **evolutionary computing** have been proposed.
 
