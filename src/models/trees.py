@@ -190,6 +190,9 @@ class RandomForestWrapper(RandomForestRegressor, Model, RegressionModel):
             torch.pow(regression_targets, 2) + torch.pow(variance_within_predictions, 2), dim=-1
         ) - torch.pow(target_mean, 2)).squeeze()
 
+        if variance_vector.shape == torch.Size([]):
+            variance_vector = torch.tensor([variance_vector])
+
         variance_vector = self.bound_variance(variance_vector)
         # variance_across_predictions = torch.var(regression_targets, dim=-1)
         # target_matrix = variance_across_predictions * torch.eye(variance_across_predictions.shape[0])
