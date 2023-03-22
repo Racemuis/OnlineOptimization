@@ -4,6 +4,7 @@ from typing import Optional, Callable
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+from botorch.exceptions import OptimizationWarning
 
 from ..plot_functions.utils import plot_GP
 from ..utils.base import RegressionModel
@@ -80,6 +81,7 @@ class MostLikelyHeteroskedasticGP(RegressionModel):
             FixedNoiseGP: A fitted instance of a FixedNoiseGP, trained as Most Likely GP regression algorithm.
         """
         g2 = g3 = None
+        optimization_problem = False
 
         if self.normalize:
             self.input_transform = transforms.input.Normalize(d=x_train.shape[-1])
@@ -116,23 +118,32 @@ class MostLikelyHeteroskedasticGP(RegressionModel):
                 z = torch.pow(g1.posterior(x_train).mean - y_train, 2)
 
             # Estimate g2 on the new dataset (noise model)
-            g2 = self.train_noise_model(covar_module, x_train, z)
+            try:
+                g2 = self.train_noise_model(covar_module, x_train, z)
 
-            # Predict the empirical noise levels using g2
-            g2.eval()
-            with torch.no_grad():
-                train_y_var = g2.posterior(x_train).mean
+                # Predict the empirical noise levels using g2
+                g2.eval()
+                with torch.no_grad():
+                    train_y_var = g2.posterior(x_train).mean
+            except OptimizationWarning:
+                optimization_problem = True
 
             # TODO: Convergence is added when the estimated noise values become too small, but this should actually be
             #  solved by predicting the log noise. Though, log -> train g2 -> exp(g2.posterior) tends to underestimate
             #  high variances
 
-            if train_y_var.lt(0).any():
+            if optimization_problem or train_y_var.lt(0).any():
                 self.log_noise = True
-                warnings.warn(
-                    f"The estimated empirical variances have become too small, which causes them to be negative"
-                    f", training g2 on log variance instead."
-                )
+                if optimization_problem:
+                    warnings.warn(
+                        f"Scipy minimize encountered an error due to too large differences in the values of z,"
+                        f" training g2 on the log variance instead."
+                    )
+                else:
+                    warnings.warn(
+                        f"The estimated empirical variances have become too small, which causes them to be negative"
+                        f", training g2 on log variance instead."
+                    )
 
                 # Estimate g2 on the new dataset (noise model)
                 g2 = self.train_noise_model(covar_module, x_train, torch.log(z))
@@ -141,6 +152,8 @@ class MostLikelyHeteroskedasticGP(RegressionModel):
                 g2.eval()
                 with torch.no_grad():
                     train_y_var = torch.exp(g2.posterior(x_train).mean)
+            else:
+                self.log_noise = False
 
             # Estimate the combined GP g3
             g3 = FixedNoiseGP(
@@ -230,6 +243,7 @@ class MostLikelyHeteroskedasticGP(RegressionModel):
         return self._composite_model
 
     def get_estimated_std(self, x_train: torch.Tensor) -> torch.Tensor:
+        self._noise_model.eval()
         if self.log_noise:
             return torch.sqrt(torch.exp(self.get_noise_model().posterior(x_train).mean))
         else:
