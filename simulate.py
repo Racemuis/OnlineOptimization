@@ -9,7 +9,7 @@ from scipy.spatial.distance import euclidean
 
 from src.utils.utils import curry
 from src.models.trees import RandomForestWrapper
-from src.optimization.selectors import SimpleSelector
+from src.optimization.selectors import AveragingSelector
 from src.optimization.replicators import MaxReplicator
 from src.optimization.pipelines import BayesOptPipeline
 from src.optimization.initializers import Random, Sobol
@@ -57,10 +57,10 @@ def main():
         "Gaussian process regression": MostLikelyHeteroskedasticGP(normalize=False),
         "Random sampling": None,
     }
-    regression_key = "Gaussian process regression"  # "Random forest regression"
+    regression_key = "Random forest regression"
     regression_model = regression_models[regression_key]
     acquisition = curry(BoundedUpperConfidenceBound, center=True, beta=0.8)
-    selector = SimpleSelector
+    selector = AveragingSelector
     replicator = MaxReplicator()
 
     # create objective_functions
@@ -164,7 +164,6 @@ def simulate_batch(
         n_random_samples = n_random_samples + n_informed_samples
         n_informed_samples = 0
         batch_results = np.zeros((n_runs, n_random_samples, simulator.dimension))
-
     else:
         batch_results = np.zeros((n_runs, n_informed_samples, simulator.dimension))
 

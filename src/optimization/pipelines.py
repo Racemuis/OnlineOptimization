@@ -86,18 +86,12 @@ class BayesOptPipeline:
             if verbose:
                 print(f"Iteration {i} - suggested candidate for maximum: {x_sample[0, 0]:.2f}.")
 
-            # selector = self.selector(
-            #     model=self.regression_model.get_model(),
-            #     estimated_variance=self.regression_model.get_estimated_std(x_train=x_train).cpu().detach(),
-            # )
-            # intermediate_results[i, :] = selector.forward(x_train=x_train, y_train=y_train)
-
             x_test = torch.tensor(np.linspace(source.get_domain()[0], source.get_domain()[1], 100)).unsqueeze(1)
-            averagingSelector = AveragingSelector(
+            selector = self.selector(
                 model=self.regression_model.get_model(),
                 estimated_variance=self.regression_model.get_estimated_std(x_train=x_train).cpu().detach(),
             )
-            intermediate_results[i, :] = averagingSelector.forward(
+            intermediate_results[i, :] = selector.forward(
                 x_train=x_train, y_train=y_train, x_test=x_test, x_replicated=self.replicated_samples
             )
 
