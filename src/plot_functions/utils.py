@@ -4,6 +4,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import torch
 from matplotlib import cm, colors, lines
+import matplotlib
+from cycler import cycler, Cycler
+
 
 from gpytorch.models.exact_gp import ExactGP
 
@@ -141,3 +144,59 @@ def plot_GP(
 
     plt.tight_layout()
     return ax
+
+
+def plot_simulation_results(
+    distances: np.ndarray,
+    n_informed_samples: int,
+    n_random_samples: int,
+    n_runs: int,
+    noise_functions: dict,
+    objective_key: str,
+    regression_key: str,
+    sample_size: int,
+    colors: Cycler = matplotlib.rcParams["axes.prop_cycle"],
+    lines: Cycler = cycler("linestyle", ["-", "--", ":", "-."]),
+) -> None:
+    """
+    Visualise the result of the simulations by plotting the distances to the optimum against the number of samples taken
+    by the optimization algorithm. Create a boxplot to show the distribution of the final outcome of the optimization
+    algorithm.
+
+    Args:
+        distances (np.ndarray): The distances to the optimum. Shape: [len(noise_functions), n_runs, sample_size].
+        n_informed_samples (int): The number of informed samples that have been sampled.
+        n_random_samples (int): The number of random samples that have been sampled.
+        n_runs (int): The number of runs that the results should be averaged over.
+        noise_functions (dict): The dictionary containing the noise functions.
+        objective_key (str): The string indicating the objective function.
+        regression_key (str): The string indicating the regression model.
+        sample_size (str): The number of samples if a random regressor is used.
+        colors (Cycler): A color cycler.
+        lines (Cycler): A linestyle cycler.
+
+    Returns:
+        None
+    """
+    fig, axes = plt.subplots(1, 2)
+    for dist, key, c, ls in zip(distances, noise_functions.keys(), colors, lines):
+        mean = np.mean(dist, axis=0).squeeze()
+        axes[0].plot(range(sample_size), mean, color=c["color"], label=key, linestyle=ls["linestyle"])
+    axes[0].legend(title="Noise type")
+    axes[0].set_xlabel("Number of informed samples")
+    axes[0].set_ylabel("Euclidean distance")
+    axes[0].set_title(f"Average distance between the estimated and true optimum")
+    axes[0].set_xticks(ticks=np.arange(0, sample_size, 5))
+    boxplot_data = [distances[i, :, -1].flatten() for i in range(len(noise_functions))]
+    axes[1].boxplot(boxplot_data)
+    axes[1].set_xlabel("Noise function")
+    axes[1].set_ylabel("Euclidean distance")
+    axes[1].set_xticklabels(noise_functions.keys())
+    axes[1].set_title(f"Eventual proposals by the optimization algorithm")
+    fig.suptitle(
+        f"{objective_key} - {regression_key}\nrandom samples: {n_random_samples}, "
+        f"informed samples: {n_informed_samples}"
+        f", number of runs: {n_runs}",
+        fontsize=14,
+    )
+    plt.show()
