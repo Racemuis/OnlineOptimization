@@ -49,15 +49,18 @@ The statistical models that can be used to approximate the objective function ar
 #### Acquisition functions
 The pipeline is compatible with all acquisition functions that are provided by [`Botorch`](https://botorch.org/) ([`botorch.acquisition`](https://botorch.org/api/acquisition.html)).
 
+- `BoundedUpperConfidenceBound`, an adaption to the UpperConfidenceBound acquisition function where the exploration-exploitation-tradeoff-parameter $\beta$ is constrained between [0, 1] instead of [0, inf]. 
+
 #### Replicators
 Replicators use a roll-out strategy to decide whether to sample a new value, or to replicate an existing sample to make a better assessment of the noise, as for example suggested in [4].
 
-_To be implemented_.
+- `MaxReplicator`, a replicator that replicates the parameters that are associated with the highest evaluated value of `y` if the proposed `x` is very close to the maximizing `x`, and the noise of the maximizing `x` is only slightly lower than the noise of the proposed `x`.
 
 #### Selectors
 Selectors the modules that select the sample that is the most likely to optimize the objective function. Currently supported selectors are:
 
-- `SimpleSelector`, makes a verdict by combining the values of $y(x)$ and the variance that is estimated by the statistical model. 
+- `SimpleSelector`, makes a verdict by combining the values of $y(x)$ and the variance that is estimated by the statistical model.
+- `AveragingSelector`, a selector that averages the values of the `x's` that, according to the regression model, are close to the optimum. The selector uses `DBSCAN` to cluster the evaluated samples prior to calculating the average. The average is weighted by the inverse variance that is estimated by the regression model. 
 
 #### Sources
 The source module represents the source whereto queries can be made to evaluate samples. Currently supported sources are:
