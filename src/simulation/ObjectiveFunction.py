@@ -16,6 +16,7 @@ class ObjectiveFunction:
         self.name = name
         self.f = f
         self.domain = domain
+        self.dimension = self.domain.shape[-1]
 
     def evaluate(self, x: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
         """
