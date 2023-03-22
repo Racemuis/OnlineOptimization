@@ -1,5 +1,7 @@
-from typing import Tuple, Type, List
+from typing import Tuple, Type, List, Callable, Optional
 
+import random
+import torch
 import numpy as np
 from tqdm import tqdm
 
@@ -7,18 +9,18 @@ from scipy.spatial.distance import euclidean
 
 from src.utils.utils import curry
 from src.models.trees import RandomForestWrapper
-from src.models.gaussian_processes import MostLikelyHeteroskedasticGP
-from src.optimization.pipelines import BayesOptPipeline
 from src.optimization.selectors import SimpleSelector
-from src.optimization.acquisition_functions import Random, BoundedUpperConfidenceBound
+from src.optimization.replicators import MaxReplicator
+from src.optimization.pipelines import BayesOptPipeline
+from src.optimization.initializers import Random, Sobol
+from src.plot_functions.utils import plot_simulation_results
+from src.models.gaussian_processes import MostLikelyHeteroskedasticGP
 from src.simulation import ObjectiveFunction, Simulator, function_factory
+from src.optimization.acquisition_functions import BoundedUpperConfidenceBound
+from src.utils.base import Initializer, Selector, RegressionModel, Replicator
 
-from botorch.acquisition import AcquisitionFunction, AnalyticAcquisitionFunction
+from botorch.exceptions.warnings import OptimizationWarning
 
-
-import matplotlib.pyplot as plt
-import matplotlib
-from cycler import cycler
 
 import warnings
 
@@ -29,6 +31,9 @@ warnings.filterwarnings(
     "ignore",
     message="Input data is not standardized. Please consider scaling the input to zero mean and unit variance.",
 )
+
+warnings.filterwarnings("error", category=OptimizationWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 
 def main():
@@ -41,48 +46,65 @@ def main():
         None
     """
     # general optimization parameters
-    n_random_samples = 5
-    n_informed_samples = 20
-    n_runs = 3
+    n_random_samples = 8
+    n_informed_samples = 15
+    n_runs = 15
 
-    # plot parameters
-    colour_cycler = matplotlib.rcParams["axes.prop_cycle"]
-    linestyle_cycler = cycler("linestyle", ["-", "--", ":", "-."])
+    # modules
+    initialization = Sobol
+    regression_models = {
+        "Random forest regression": RandomForestWrapper(n_estimators=10, random_state=44),
+        "Gaussian process regression": MostLikelyHeteroskedasticGP(normalize=False),
+        "Random sampling": None,
+    }
+    regression_key = "Gaussian process regression"  # "Random forest regression"
+    regression_model = regression_models[regression_key]
+    acquisition = curry(BoundedUpperConfidenceBound, center=True, beta=0.8)
+    selector = SimpleSelector
+    replicator = MaxReplicator()
 
     # create objective_functions
-    sin_and_log = ObjectiveFunction.ObjectiveFunction(
-        name="Sinusoid and Log", f=function_factory.sinusoid_and_log, domain=np.array([[0], [10]], dtype=float)
-    )
-    branin = function_factory.BraninFunction()
+    objective_functions = {
+        "Sinusoid and Log": ObjectiveFunction.ObjectiveFunction(
+            name="Sinusoid and Log", f=function_factory.sinusoid_and_log, domain=np.array([[0], [10]], dtype=float)
+        ),
+        "Branin": function_factory.BraninFunction(),
+    }
+    objective_key = "Sinusoid and Log"
+    objective_function = objective_functions[objective_key]
+
+    # create noise functions
     noise_functions = {
         "cosine scale": function_factory.cosine_scale,
         "flat": function_factory.flat,
         "linear": function_factory.linear,
     }
 
-    for i, (key, c, ls) in enumerate(zip(noise_functions.keys(), colour_cycler, linestyle_cycler)):
+    sample_size = n_informed_samples if regression_model is not None else n_informed_samples + n_random_samples
+    distances = np.empty((len(noise_functions), n_runs, sample_size))
+    for i, key in enumerate(noise_functions.keys()):
         # reset seed for each new simulation
         np.random.seed(44)
+        random.seed(44)
+        torch.manual_seed(44)
 
-        simulator = Simulator.Simulator(objective_function=branin, noise_function=noise_functions[key])
-        results, dist = simulate_batch(
-            simulator=simulator, n_runs=n_runs, n_informed_samples=n_informed_samples, n_random_samples=n_random_samples
+        simulator = Simulator.Simulator(objective_function=objective_function, noise_function=noise_functions[key])
+        results, distance = simulate_batch(
+            simulator=simulator,
+            initialization=initialization,
+            regression_model=regression_model,
+            acquisition=acquisition,
+            selector=selector,
+            replicator=replicator,
+            n_runs=n_runs,
+            n_informed_samples=n_informed_samples,
+            n_random_samples=n_random_samples,
         )
+        distances[i, ...] = distance.squeeze()
 
-        # plot results
-        mean = np.mean(dist, axis=0).squeeze()
-        std = np.std(dist, axis=0).squeeze()
-        plt.fill_between(range(n_informed_samples), mean - std, mean + std, color=c["color"], alpha=0.2)
-        plt.plot(range(n_informed_samples), mean, color=c["color"], label=key, linestyle=ls["linestyle"])
-
-    plt.legend(title="Noise type")
-    plt.xlabel("Number of informed samples")
-    plt.ylabel("Euclidean distance")
-    plt.title(
-        f"The average distance between the estimated and true optimum over {n_runs} runs"
-        f"\n{n_random_samples} random initialization samples"
-    )
-    plt.show()
+    # plot results
+    plot_simulation_results(distances, n_informed_samples, n_random_samples, n_runs,
+                            noise_functions, objective_key, regression_key, sample_size)
 
 
 def euclidean_distance(batch_results: np.ndarray, optima: List[np.ndarray]):
@@ -108,7 +130,15 @@ def euclidean_distance(batch_results: np.ndarray, optima: List[np.ndarray]):
 
 
 def simulate_batch(
-    simulator: Simulator.Simulator, n_runs: int, n_informed_samples: int, n_random_samples: int
+    simulator: Simulator.Simulator,
+    initialization: Type[Initializer],
+    regression_model: Optional[RegressionModel],
+    acquisition: Callable,
+    selector: Type[Selector],
+    replicator: Replicator,
+    n_runs: int,
+    n_informed_samples: int,
+    n_random_samples: int,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Make a batch simulation of a Bayesian optimization process. For each informed sample, the optimization process is
@@ -117,6 +147,11 @@ def simulate_batch(
 
     Args:
         simulator (Simulator): The simulator of the unknown optimization function.
+        initialization (Initializer): The initialization sampler.
+        regression_model (RegressionModel): The regression model that is used for calculating the likelihood.
+        acquisition (Callable): The Bayesian optimization acquisition function.
+        selector (Selector): A final selection strategy.
+        replicator (Replicator): A replicator strategy.
         n_runs (int): The number of runs to simulate.
         n_informed_samples (int): The number of informed samples to take.
         n_random_samples (int): The number of random samples to take.
@@ -125,19 +160,25 @@ def simulate_batch(
         batch_results (np.ndarray): The results of the optimization process.
         batch_differences (np.ndarray): The Euclidean distance between the true optimum and the estimated optimum.
     """
-    batch_results = np.zeros((n_runs, n_informed_samples, simulator.dimension))
+    if regression_model is None:
+        n_random_samples = n_random_samples + n_informed_samples
+        n_informed_samples = 0
+        batch_results = np.zeros((n_runs, n_random_samples, simulator.dimension))
 
-    # MostLikelyHeteroskedasticGP(normalize=False)
-    # TODO: get this abomination up in the hierarchy and make it nicely parameterizable :)
+    else:
+        batch_results = np.zeros((n_runs, n_informed_samples, simulator.dimension))
+
     for i in tqdm(range(n_runs), desc="Simulating batch"):
         pipe = BayesOptPipeline(
-            initialization=Random(size=n_random_samples, domain=np.array(simulator.get_domain(), dtype=float)),
-            regression_model=RandomForestWrapper(n_estimators=10, random_state=44),
-            acquisition=curry(BoundedUpperConfidenceBound, beta=0.7),
-            selector=SimpleSelector,
+            initialization=initialization(domain=np.array(simulator.get_domain(), dtype=float)),
+            regression_model=regression_model,
+            acquisition=acquisition,
+            selector=selector,
+            replicator=replicator,
         )
-        batch_results[i, ...] = pipe.optimize(source=simulator, informed_sample_size=n_informed_samples, plot=False)
-
+        batch_results[i, ...] = pipe.optimize(
+            source=simulator, random_sample_size=n_random_samples, informed_sample_size=n_informed_samples, plot=False
+        )
     batch_differences = euclidean_distance(batch_results, simulator.objective_function.get_maximum())
     return batch_results, batch_differences
 
