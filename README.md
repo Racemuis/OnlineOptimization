@@ -33,6 +33,11 @@ Once the optimization process is finished, the model should yield the values for
 
 ### Design
 The coded pipeline is designed to be as flexible as possible. Therefore, the different components of the optimization pipeline are represented by the following modules. 
+The interplay between the modules is described in the figure below.
+
+<p align="center">
+<img src="figures/design_diagram.png">
+</p>
 
 #### Initial sampling
 To gather the initial training data for the statistical model, (quasi-)random values are sampled from the space from $x$ and evaluated. Currently, the following samplers are supported:
