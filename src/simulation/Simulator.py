@@ -1,5 +1,4 @@
 from typing import Callable, Union
-from dataclasses import dataclass
 
 from .ObjectiveFunction import ObjectiveFunction
 from ..plot_functions import utils
@@ -14,6 +13,7 @@ class Simulator(Source):
     """Simulator of an unknown objective function."""
 
     def __init__(self, objective_function: ObjectiveFunction, noise_function: Callable):
+        super().__init__()
         self._objective_function = objective_function
         self._noise_function = noise_function
         self._dimension = (
