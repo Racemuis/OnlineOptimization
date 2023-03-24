@@ -6,7 +6,7 @@ from botorch.acquisition import AcquisitionFunction
 
 
 def curry(
-    acquisition_function: Type[AcquisitionFunction], **kwargs
+    acquisition_function: Type[AcquisitionFunction], **kwargs: Union[bool, float]
 ) -> Union[Callable[[Model], AcquisitionFunction], Callable[[Tensor, Model], AcquisitionFunction]]:
     """
     Function that curries an acquisition function such that the acquisition function can be initialized later on, when
