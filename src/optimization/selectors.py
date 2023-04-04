@@ -1,7 +1,9 @@
 from typing import Union, Optional, List
 import torch
+import numpy as np
 
 from scipy.spatial.distance import euclidean
+from scipy.stats import zscore
 from sklearn.cluster import DBSCAN
 
 
@@ -16,13 +18,23 @@ class SimpleSelector(Selector):
     estimated by the model.
     """
 
-    def __init__(self, model: BatchedMultiOutputGPyTorchModel, estimated_variance: torch.Tensor):
+    def __init__(
+        self,
+        model: BatchedMultiOutputGPyTorchModel,
+        estimated_variance_train: torch.Tensor,
+        estimated_variance_test: torch.Tensor,
+    ):
         """
         Args:
             model (BatchedMultiOutputGPyTorchModel): The fitted model.
-            estimated_variance (Tensor): The variance that is estimated by the model.
+            estimated_variance_train (Tensor): The variance that is estimated by the model over the evaluated samples.
+            estimated_variance_test (Tensor): The variance that is estimated by the model over the hypothetical samples.
         """
-        super().__init__(model=model, estimated_variance=estimated_variance)
+        super().__init__(
+            model=model,
+            estimated_variance_train=estimated_variance_train,
+            estimated_variance_test=estimated_variance_test,
+        )
 
     def forward(
         self,
@@ -46,18 +58,28 @@ class SimpleSelector(Selector):
         """
         self.model.eval()
         x_posterior = self.model.posterior(x_train).mean
-        fitness = y_train.squeeze() * 1 / self.estimated_variance.squeeze() + x_posterior.squeeze()
+        fitness = y_train.squeeze() * 1 / self.estimated_variance_train.squeeze() + x_posterior.squeeze()
         return x_train[torch.argmax(fitness)]
 
 
 class AveragingSelector(Selector):
-    def __init__(self, model: BatchedMultiOutputGPyTorchModel, estimated_variance: torch.Tensor):
+    def __init__(
+        self,
+        model: BatchedMultiOutputGPyTorchModel,
+        estimated_variance_train: torch.Tensor,
+        estimated_variance_test: torch.Tensor,
+    ):
         """
         Args:
             model (BatchedMultiOutputGPyTorchModel): The fitted model.
-            estimated_variance (Tensor): The variance that is estimated by the model.
+            estimated_variance_train (Tensor): The variance that is estimated by the model over the evaluated samples.
+            estimated_variance_test (Tensor): The variance that is estimated by the model over the hypothetical samples.
         """
-        super().__init__(model=model, estimated_variance=estimated_variance)
+        super().__init__(
+            model=model,
+            estimated_variance_train=estimated_variance_train,
+            estimated_variance_test=estimated_variance_test,
+        )
 
     def forward(
         self, x_train: torch.Tensor, y_train: torch.Tensor, x_test: torch.Tensor, x_replicated: List[torch.Tensor]
@@ -79,32 +101,82 @@ class AveragingSelector(Selector):
         # get the maximum from the posterior
         self.model.eval()
         posterior = self.model.posterior(X=x_test).mean
-        x_test_max = x_test[torch.argmax(posterior)]
 
-        # get all evaluated samples that are close to x_test_max (use DBSCAN on the x-axis to cluster the samples)
-        closest_train_idx = torch.argmin(torch.tensor([euclidean(x, x_test_max[0]) for x in x_train.cpu().detach()]))
+        argmax_posterior = torch.argmax(posterior)
+        argmax_evaluated = torch.argmax(y_train)
+
+        x_post_opt = x_test[argmax_posterior]
+        # x_eval_opt = x_train[argmax_evaluated]
+        #
+        # x_post_opt_var = self.estimated_variance_test[argmax_posterior]
+        # x_eval_opt_var = self.estimated_variance_train[argmax_evaluated]
+
+        # get all evaluated samples that are close to x_post_max (use DBSCAN on the x-axis to cluster the samples)
+        closest_train_idx = torch.argmin(torch.tensor([euclidean(x, x_post_opt[0]) for x in x_train.cpu().detach()]))
+        # print(f"closest eval x to posterior x: {x_train[closest_train_idx]}")
         col_stack_train = torch.hstack([x_train, y_train])
         dist_to_closest, _ = torch.sort(
-            torch.tensor([euclidean(x, col_stack_train[closest_train_idx]) for x in col_stack_train.cpu().detach()])
+            torch.tensor([euclidean(x, x_train[closest_train_idx]) for x in x_train.cpu().detach()])
         )
 
         # cluster the evaluated samples using DBSCAN with a flexible distance parameter eps
-        eps = dist_to_closest[1].item()
-        clusters = DBSCAN(eps=eps, min_samples=1).fit(col_stack_train)
+        eps = dist_to_closest[1].item() + 1e-5
+        clusters = DBSCAN(eps=eps, min_samples=1).fit(x_train)
         max_label = clusters.labels_[closest_train_idx]
         clustered_elements = x_train[clusters.labels_ == max_label]
 
         # weigh the clustered samples by their inverse variance
-        clustered_var = self.model.posterior(X=clustered_elements).variance
-        weighted_average = torch.sum(clustered_elements.squeeze() / clustered_var.squeeze()) / torch.sum(
-            1 / clustered_var
+        clustered_var = self.model.posterior(X=clustered_elements).variance.cpu().detach().numpy()
+        clustered_var = clustered_var.squeeze()[:, np.newaxis]
+        clustered_elements = clustered_elements.numpy()
+
+        weighted_average = np.sum(clustered_elements / clustered_var, axis=0) / np.sum(1 / clustered_var)
+        return weighted_average
+
+
+class VarianceSelector(Selector):
+    def __init__(
+        self,
+        model: BatchedMultiOutputGPyTorchModel = None,
+        estimated_variance_train: torch.Tensor = None,
+        estimated_variance_test: torch.Tensor = None,
+    ):
+        super().__init__(
+            model=model,
+            estimated_variance_train=estimated_variance_train,
+            estimated_variance_test=estimated_variance_test,
         )
-        return weighted_average.unsqueeze(0).cpu().detach()
+
+    def forward(
+        self,
+        x_train: torch.Tensor,
+        y_train: torch.Tensor,
+        x_test: Optional[torch.Tensor] = None,
+        x_replicated: Optional[List[torch.Tensor]] = None,
+    ) -> Union[torch.tensor, float]:
+
+        y_scaled = 0.7 * zscore(y_train.squeeze()) - 0.3 * zscore(torch.pow(self.estimated_variance_train.squeeze(), 2))
+        return x_train[torch.argmax(y_scaled)]
 
 
 class NaiveSelector(Selector):
-    def __init__(self, model: Optional = None, estimated_variance: Optional = None):
-        super().__init__(model=model, estimated_variance=estimated_variance)
+    def __init__(
+        self,
+        model: BatchedMultiOutputGPyTorchModel = None,
+        estimated_variance_train: torch.Tensor = None,
+        estimated_variance_test: torch.Tensor = None,
+    ):
+        """
+        Args:
+            model (BatchedMultiOutputGPyTorchModel): The fitted model.
+            estimated_variance_train (Tensor): The variance that is estimated by the model over the evaluated samples.
+            estimated_variance_test (Tensor): The variance that is estimated by the model over the hypothetical samples.
+        """
+        super().__init__(
+            model=model,
+            estimated_variance_train=estimated_variance_train,
+            estimated_variance_test=estimated_variance_test,
+        )
 
     def forward(
         self,
