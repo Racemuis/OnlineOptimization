@@ -128,10 +128,6 @@ class MostLikelyHeteroskedasticGP(RegressionModel):
             except OptimizationWarning:
                 optimization_problem = True
 
-            # TODO: Convergence is added when the estimated noise values become too small, but this should actually be
-            #  solved by predicting the log noise. Though, log -> train g2 -> exp(g2.posterior) tends to underestimate
-            #  high variances
-
             if optimization_problem or train_y_var.lt(0).any():
                 self.log_noise = True
                 if optimization_problem:
@@ -274,7 +270,6 @@ class MostLikelyHeteroskedasticGP(RegressionModel):
         Returns:
             None
         """
-        noise_model = self.get_noise_model().eval()
         composite_model = self.get_model().eval()
         domain = domain.astype(int)
 
