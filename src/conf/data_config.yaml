@@ -1,0 +1,11 @@
+data_path: C:\Users\Racemuis\Documents\school\m artificial intelligence\semester 2\thesis\bci_data\auditory_aphasia
+auditory_aphasia:
+  participant_list:
+    - VPpblz_15_08_14
+    #- VPpboa_15_08_11
+    #- VPpbob_15_08_13
+    #- VPpboc_15_08_17
+  condition_list:
+    - 1D
+    - 6D
+    - HP
