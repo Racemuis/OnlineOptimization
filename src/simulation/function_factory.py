@@ -69,7 +69,7 @@ def ackley_function(
 
     Optimum: x^* = [0, ..., 0]
 
-    [1] David H. Ackley. 1987. A connectionist machine for genetic hillclimbing. Kluwer Academic Publishers, USA.
+    [1] David H. Ackley. 1987. A connectionist machine for genetic hill climbing. Kluwer Academic Publishers, USA.
 
     Args:
         x (Union[float, np.ndarray]): the function parameter
