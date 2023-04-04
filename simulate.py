@@ -7,12 +7,13 @@ from tqdm import tqdm
 
 from scipy.spatial.distance import euclidean
 
-from src.utils.utils import curry
+from src.utils.base import Source
+from src.utils.wrap_acqf import curry
 from src.models.trees import RandomForestWrapper
 from src.optimization.selectors import AveragingSelector
 from src.optimization.replicators import MaxReplicator
 from src.optimization.pipelines import BayesOptPipeline
-from src.optimization.initializers import Random, Sobol
+from src.optimization import initializers
 from src.plot_functions.utils import plot_simulation_results
 from src.models.gaussian_processes import MostLikelyHeteroskedasticGP
 from src.simulation import ObjectiveFunction, Simulator, function_factory
@@ -34,6 +35,7 @@ warnings.filterwarnings(
 
 warnings.filterwarnings("error", category=OptimizationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
+warnings.simplefilter(action="ignore", category=RuntimeWarning)
 
 
 def main():
@@ -49,15 +51,16 @@ def main():
     n_random_samples = 8
     n_informed_samples = 15
     n_runs = 15
+    plot = False
 
     # modules
-    initialization = Sobol
+    initialization = initializers.Sobol
     regression_models = {
         "Random forest regression": RandomForestWrapper(n_estimators=10, random_state=44),
         "Gaussian process regression": MostLikelyHeteroskedasticGP(normalize=False),
         "Random sampling": None,
     }
-    regression_key = "Random forest regression"
+    regression_key = "Gaussian process regression"
     regression_model = regression_models[regression_key]
     acquisition = curry(BoundedUpperConfidenceBound, center=True, beta=0.8)
     selector = AveragingSelector
@@ -80,8 +83,7 @@ def main():
         "linear": function_factory.linear,
     }
 
-    sample_size = n_informed_samples if regression_model is not None else n_informed_samples + n_random_samples
-    distances = np.empty((len(noise_functions), n_runs, sample_size))
+    distances = np.empty((len(noise_functions), n_runs, n_informed_samples + n_random_samples))
     for i, key in enumerate(noise_functions.keys()):
         # reset seed for each new simulation
         np.random.seed(44)
@@ -99,12 +101,14 @@ def main():
             n_runs=n_runs,
             n_informed_samples=n_informed_samples,
             n_random_samples=n_random_samples,
+            plot=plot,
         )
         distances[i, ...] = distance.squeeze()
 
     # plot results
-    plot_simulation_results(distances, n_informed_samples, n_random_samples, n_runs,
-                            noise_functions, objective_key, regression_key, sample_size)
+    plot_simulation_results(
+        distances, n_informed_samples, n_random_samples, n_runs, noise_functions, objective_key, regression_key
+    )
 
 
 def euclidean_distance(batch_results: np.ndarray, optima: List[np.ndarray]):
@@ -130,7 +134,7 @@ def euclidean_distance(batch_results: np.ndarray, optima: List[np.ndarray]):
 
 
 def simulate_batch(
-    simulator: Simulator.Simulator,
+    simulator: Source,
     initialization: Type[Initializer],
     regression_model: Optional[RegressionModel],
     acquisition: Callable,
@@ -139,6 +143,7 @@ def simulate_batch(
     n_runs: int,
     n_informed_samples: int,
     n_random_samples: int,
+    plot: bool,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Make a batch simulation of a Bayesian optimization process. For each informed sample, the optimization process is
@@ -155,17 +160,13 @@ def simulate_batch(
         n_runs (int): The number of runs to simulate.
         n_informed_samples (int): The number of informed samples to take.
         n_random_samples (int): The number of random samples to take.
+        plot (bool): True if the intermediate runs should be plotted.
 
     Returns:
         batch_results (np.ndarray): The results of the optimization process.
         batch_differences (np.ndarray): The Euclidean distance between the true optimum and the estimated optimum.
     """
-    if regression_model is None:
-        n_random_samples = n_random_samples + n_informed_samples
-        n_informed_samples = 0
-        batch_results = np.zeros((n_runs, n_random_samples, simulator.dimension))
-    else:
-        batch_results = np.zeros((n_runs, n_informed_samples, simulator.dimension))
+    batch_results = np.zeros((n_runs, n_random_samples + n_informed_samples, simulator.dimension))
 
     for i in tqdm(range(n_runs), desc="Simulating batch"):
         pipe = BayesOptPipeline(
@@ -176,7 +177,7 @@ def simulate_batch(
             replicator=replicator,
         )
         batch_results[i, ...] = pipe.optimize(
-            source=simulator, random_sample_size=n_random_samples, informed_sample_size=n_informed_samples, plot=False
+            source=simulator, random_sample_size=n_random_samples, informed_sample_size=n_informed_samples, plot=plot
         )
     batch_differences = euclidean_distance(batch_results, simulator.objective_function.get_maximum())
     return batch_results, batch_differences

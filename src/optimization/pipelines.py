@@ -3,8 +3,8 @@ import torch
 from typing import Type, Optional, Tuple, Union, Callable
 
 from src.utils.base import Source, RegressionModel, Initializer, Selector, Replicator
-from src.optimization.selectors import NaiveSelector, AveragingSelector
-from src.utils.utils import uncurry
+from src.optimization.selectors import NaiveSelector
+from src.utils.wrap_acqf import uncurry
 
 from botorch.optim import optimize_acqf
 from botorch.models.model import Model
@@ -43,6 +43,7 @@ class BayesOptPipeline:
         self.replicator = replicator
         self.selector = selector
         self.replicated_samples = []
+        self.previous_posterior = None
 
     def optimize(
         self,
@@ -65,35 +66,39 @@ class BayesOptPipeline:
         Returns:
             Union[float, np.ndarray]: The optimal coordinates found by the Bayesian optimization process.
         """
+        x_test = torch.tensor(np.linspace(source.get_domain()[0], source.get_domain()[1], 100)).unsqueeze(1)
 
-        intermediate_results = np.empty((informed_sample_size, source.dimension))
+        # TODO: Calculating the posterior using x-test like this is faulty, but predicting the posterior in multiple
+        #  dimensions will result in a cartesian product. Thus, make a new selector.
 
-        if self.regression_model is None:
-            intermediate_results = np.empty((random_sample_size, source.dimension))
+        intermediate_results = np.zeros((random_sample_size + informed_sample_size, source.dimension))
 
         # Bayesian optimization - phase 1: Random sampling
         x_train = self.initialization.forward(n_samples=random_sample_size)
         y_train = torch.tensor(source.sample(x=x_train.numpy().squeeze())).unsqueeze(1)
 
         # Bayesian optimization - phase 2: informed sampling
-        for i in range(informed_sample_size):
-            x_sample, y_sample = self._optimization_step(x_train=x_train, y_train=y_train, source=source)
+        if self.regression_model is not None:
+            for i in range(informed_sample_size):
+                x_sample, y_sample = self._optimization_step(
+                    x_train=x_train, y_train=y_train, x_test=x_test, source=source
+                )
 
-            # Update training data
-            x_train = torch.cat((x_train, x_sample))
-            y_train = torch.cat((y_train, y_sample))
+                # Update training data
+                x_train = torch.cat((x_train, x_sample))
+                y_train = torch.cat((y_train, y_sample))
 
-            if verbose:
-                print(f"Iteration {i} - suggested candidate for maximum: {x_sample[0, 0]:.2f}.")
+                if verbose:
+                    print(f"Iteration {i} - suggested candidate for maximum: {x_sample[0, 0]:.2f}.")
 
-            x_test = torch.tensor(np.linspace(source.get_domain()[0], source.get_domain()[1], 100)).unsqueeze(1)
-            selector = self.selector(
-                model=self.regression_model.get_model(),
-                estimated_variance=self.regression_model.get_estimated_std(x_train=x_train).cpu().detach(),
-            )
-            intermediate_results[i, :] = selector.forward(
-                x_train=x_train, y_train=y_train, x_test=x_test, x_replicated=self.replicated_samples
-            )
+                selector = self.selector(
+                    model=self.regression_model.get_model(),
+                    estimated_variance_train=self.regression_model.get_estimated_std(x_train=x_train).cpu().detach(),
+                    estimated_variance_test=self.regression_model.get_estimated_std(x_train=x_test).cpu().detach(),
+                )
+                intermediate_results[random_sample_size+i, ...] = selector.forward(
+                    x_train=x_train, y_train=y_train, x_test=x_test, x_replicated=self.replicated_samples
+                )
 
         if plot:
             self.regression_model.plot(
@@ -108,14 +113,16 @@ class BayesOptPipeline:
                 ),
             )
 
-        if self.regression_model is None:
-            for i in range(1, random_sample_size):
-                selector = NaiveSelector()
-                intermediate_results[i, :] = selector.forward(x_train=x_train[:i, ...], y_train=y_train[:i, ...])
+        # Use the selector to get a verdict for the random samples
+        size = random_sample_size if self.regression_model is not None else random_sample_size + informed_sample_size
+        for i in range(size):
+            selector = NaiveSelector()
+            intermediate_results[i, ...] = selector.forward(x_train=x_train[:i+1, ...], y_train=y_train[:i+1, ...])
+
         return intermediate_results
 
     def _optimization_step(
-        self, x_train: torch.Tensor, y_train: torch.Tensor, source: Source,
+        self, x_train: torch.Tensor, y_train: torch.Tensor, x_test: torch.Tensor, source: Source,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         A Bayesian optimization, optimization step. Use the acquisition function to select a new sample, based on the
@@ -124,13 +131,13 @@ class BayesOptPipeline:
         Args:
             x_train (torch.Tensor): A `batch_shape x n x d` tensor of training features.
             y_train (torch.Tensor): A `batch_shape x n x m` tensor of training observations.
+            x_test (torch.Tensor): A `batch_shape x n x d` tensor of densely spaced test features.
             source (Source): A source where samples can be taken from.
 
         Returns:
             torch.Tensor: The x-coordinate of the sample.
             torch.Tensor: The y-coordinate of the sample.
         """
-        x_test = torch.tensor(np.linspace(source.get_domain()[0], source.get_domain()[1], 100)).unsqueeze(1)
         fitted_model = self.regression_model.fit(x_train, y_train)
         acq_function = uncurry(curried_acquisition=self.acquisition, model=fitted_model, x_train=x_train)
 
@@ -142,6 +149,7 @@ class BayesOptPipeline:
             acq_function=acq_function, bounds=bounds, q=1, num_restarts=5, raw_samples=20, options=options
         )
 
+        # Possible replication
         x_sample = self.replicator.forward(
             x_proposed=x_proposed,
             x_train=x_train,
@@ -150,8 +158,15 @@ class BayesOptPipeline:
             estimated_std=self.regression_model.get_estimated_std(x_train=x_test),
         )
 
-        if not torch.eq(x_sample, x_proposed):
+        # Store replicated samples
+        if not torch.equal(x_sample, x_proposed):
             self.replicated_samples.append(x_sample)
+
+        posterior = fitted_model.posterior(x_test).mean.cpu().detach().numpy().squeeze()
+        if self.previous_posterior is not None:
+            pass
+            # print(f"MSE: {mean_squared_error(posterior, self.previous_posterior)}")
+        self.previous_posterior = posterior
 
         y_sample = torch.tensor(source.sample(x=x_sample.numpy()))
         return x_sample, torch.tensor([[y_sample.item()]])
