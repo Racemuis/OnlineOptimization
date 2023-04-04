@@ -1,4 +1,4 @@
-from typing import Any, Union, Callable, Optional
+from typing import Union, Callable, Optional
 
 import numpy as np
 
@@ -9,7 +9,7 @@ from .Reader import Reader
 from ..utils.base import Source
 
 
-# TODO: parameters to optimize
+# Parameters to optimize
 #  Shrinkage (float) ∈ [0, 1]  <-
 #  Decimation (int) ∈ [0, 150] <-
 #  Baseline correction (float) ∈ [-0.2, 0]      (lower bound)
@@ -19,16 +19,31 @@ from ..utils.base import Source
 
 
 class DataSimulator(Source):
+    """A class that can be used to simulate BCI data."""
     def __init__(
         self,
         data_config: dict,
         experiment: str,
         participant: str,
         condition: str,
-        noise_function: Optional[Callable[[np.ndarray], np.ndarray]],
+        noise_function: Callable[[np.ndarray], np.ndarray],
         dimension: int,
         n_intervals: int = 5,
     ):
+        """
+
+        Args:
+            data_config (dict): The data configuration file.
+            experiment (str): The name of the experiment (matches with a key in the data_config).
+            participant (Optional[str]): The participant to read. If None is provided, all participants are read.
+                Default = None.
+            condition (Optional[str]): The condition to read. If None is provided, all conditions are read.
+                Default = None.
+            noise_function (Callable[[np.ndarray], np.ndarray]): The noise function describing the scale of the Gaussian
+             distribution that is superimposed on the simulated data.
+            dimension (int): The dimensionality of the optimization problem. Only 0 < dimension <= 3 are supported.
+            n_intervals (int): The number of temporal intervals that should be averaged over within the epoch.
+        """
         assert dimension <= 3, "Only the dimensionalities of 1, 2 and 3 are supported."
         super().__init__()
         self.data_config = data_config
@@ -59,6 +74,17 @@ class DataSimulator(Source):
         return None
 
     def sample(self, x: np.ndarray, info: bool = False, noise: bool = True) -> Union[float, np.ndarray]:
+        """
+        Sample the objective function for the value 'x'.
+
+        Args:
+            x (Union[float, np.ndarray]): The value that is used as an input for the objective function.
+            info (bool): True if the (noisy) value of the objective function should be printed.
+            noise (bool): True if noise should be superimposed on the sampled value of the objective function.
+
+        Returns:
+            Union[float, np.ndarray]: The value of the (noisy) objective function at `x`.
+        """
         if not x.shape == (1, 1) and x.squeeze().shape[0] != self.dimension:
             results = np.zeros(x.shape[0])
             for i, sample in enumerate(x):
@@ -67,6 +93,17 @@ class DataSimulator(Source):
         return self.single_sample(x=x, noise=noise)
 
     def single_sample(self, x: np.ndarray, noise: bool) -> float:
+        """
+        Take a single sample of the objective function for the value of `x`.
+
+        Args:
+            x (Union[float, np.ndarray]): The value that is used as an input for the objective function.
+            noise (bool): True if noise should be superimposed on the sampled value of the objective function.
+
+        Returns:
+            Union[float, np.ndarray]: The value of the (noisy) objective function at `x`.
+
+        """
         if self.dimension == 1:
             shrinkage = x
             boundaries = np.array([0.1, 0.17, 0.23, 0.3, 0.41, 0.5])
@@ -107,6 +144,16 @@ class DataSimulator(Source):
         return f_x
 
     def get_paper_score(self):
+        """
+        Calculate the AUC score that can be associated with the parameter settings that have been used in [1].
+
+        [1] Sosulski, J., & Tangermann, M. (2022). Introducing block-Toeplitz covariance matrices to remaster linear
+        discriminant analysis for event-related potential brain-computer interfaces. Journal of neural engineering,
+        19(6), 10.1088/1741-2552/ac9c98. https://doi.org/10.1088/1741-2552/ac9c98
+
+        Returns:
+            float: the AUC score that can be associated with the parameter settings that have been used in [1]
+        """
         epoch = self.epoch_dict[self.participant][self.condition]
         x_train = self.reader.average_temporal_intervals(epoch, boundaries=np.array([0.1, 0.17, 0.23, 0.3, 0.41, 0.5]))
         x_train = x_train.reshape((-1, epoch.info["nchan"] * self.n_intervals))
@@ -121,6 +168,12 @@ class DataSimulator(Source):
         return f_x
 
     def get_domain(self) -> np.ndarray:
+        """
+        The domain of the simulated objective function.
+
+        Returns:
+            np.ndarray: The domain of the simulated objective function.
+        """
         domains = np.array(
             [
                 [0, 1],  # shrinkage
@@ -137,6 +190,15 @@ class DataSimulator(Source):
 
     @staticmethod
     def get_item(x: Union[float, np.ndarray]) -> float:
+        """
+        Unwrap numpy arrays.
+
+        Args:
+            x (Union[float, np.ndarray]): an input value that is possibly wrapped in multiple input arrays.
+
+        Returns:
+            float: The unwrapped item.
+        """
         while isinstance(x, np.ndarray):
             x = x[0]
         return x
