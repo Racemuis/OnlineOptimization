@@ -13,6 +13,7 @@ class Source(ABC):
         pass
 
     @property
+    @abstractmethod
     def dimension(self):
         ...
 
@@ -27,7 +28,7 @@ class Source(ABC):
         ...
 
     @abstractmethod
-    def sample(self, x: Any, info: bool = False):
+    def sample(self, x: Union[float, np.ndarray], info: bool = False) -> Union[float, np.ndarray]:
         ...
 
     @abstractmethod
@@ -81,9 +82,10 @@ class Initializer(ABC):
 
 
 class Selector(ABC):
-    def __init__(self, model: Optional[BatchedMultiOutputGPyTorchModel], estimated_variance: Optional[torch.Tensor]):
+    def __init__(self, model: Optional[BatchedMultiOutputGPyTorchModel], estimated_variance_train: Optional[torch.Tensor], estimated_variance_test: Optional[torch.Tensor]):
         self.model = model
-        self.estimated_variance = estimated_variance
+        self.estimated_variance_train = estimated_variance_train
+        self.estimated_variance_test = estimated_variance_test
 
     @abstractmethod
     def forward(
