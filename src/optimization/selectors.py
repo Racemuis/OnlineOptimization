@@ -20,6 +20,7 @@ class SimpleSelector(Selector):
 
     def __init__(
         self,
+        beta: float,
         model: BatchedMultiOutputGPyTorchModel,
         estimated_variance_train: torch.Tensor,
         estimated_variance_test: torch.Tensor,
@@ -31,6 +32,7 @@ class SimpleSelector(Selector):
             estimated_variance_test (Tensor): The variance that is estimated by the model over the hypothetical samples.
         """
         super().__init__(
+            beta=beta,
             model=model,
             estimated_variance_train=estimated_variance_train,
             estimated_variance_test=estimated_variance_test,
@@ -65,6 +67,7 @@ class SimpleSelector(Selector):
 class AveragingSelector(Selector):
     def __init__(
         self,
+        beta: float,
         model: BatchedMultiOutputGPyTorchModel,
         estimated_variance_train: torch.Tensor,
         estimated_variance_test: torch.Tensor,
@@ -76,6 +79,7 @@ class AveragingSelector(Selector):
             estimated_variance_test (Tensor): The variance that is estimated by the model over the hypothetical samples.
         """
         super().__init__(
+            beta=beta,
             model=model,
             estimated_variance_train=estimated_variance_train,
             estimated_variance_test=estimated_variance_test,
@@ -137,11 +141,13 @@ class AveragingSelector(Selector):
 class VarianceSelector(Selector):
     def __init__(
         self,
+        beta: float,
         model: BatchedMultiOutputGPyTorchModel = None,
         estimated_variance_train: torch.Tensor = None,
         estimated_variance_test: torch.Tensor = None,
     ):
         super().__init__(
+            beta=beta,
             model=model,
             estimated_variance_train=estimated_variance_train,
             estimated_variance_test=estimated_variance_test,
@@ -154,14 +160,16 @@ class VarianceSelector(Selector):
         x_test: Optional[torch.Tensor] = None,
         x_replicated: Optional[List[torch.Tensor]] = None,
     ) -> Union[torch.tensor, float]:
-
-        y_scaled = 0.7 * zscore(y_train.squeeze()) - 0.3 * zscore(torch.pow(self.estimated_variance_train.squeeze(), 2))
+        y_scaled = (1 - self.beta) * zscore(y_train.squeeze()) - self.beta * zscore(
+            torch.pow(self.estimated_variance_train.squeeze(), 2)
+        )
         return x_train[torch.argmax(y_scaled)]
 
 
 class NaiveSelector(Selector):
     def __init__(
         self,
+        beta: float,
         model: BatchedMultiOutputGPyTorchModel = None,
         estimated_variance_train: torch.Tensor = None,
         estimated_variance_test: torch.Tensor = None,
@@ -173,6 +181,7 @@ class NaiveSelector(Selector):
             estimated_variance_test (Tensor): The variance that is estimated by the model over the hypothetical samples.
         """
         super().__init__(
+            beta=beta,
             model=model,
             estimated_variance_train=estimated_variance_train,
             estimated_variance_test=estimated_variance_test,

@@ -82,7 +82,15 @@ class Initializer(ABC):
 
 
 class Selector(ABC):
-    def __init__(self, model: Optional[BatchedMultiOutputGPyTorchModel], estimated_variance_train: Optional[torch.Tensor], estimated_variance_test: Optional[torch.Tensor]):
+    def __init__(
+        self,
+        beta: float,
+        model: Optional[BatchedMultiOutputGPyTorchModel],
+        estimated_variance_train: Optional[torch.Tensor],
+        estimated_variance_test: Optional[torch.Tensor],
+    ):
+        assert 0 <= beta <= 1, f"beta should on the domain [0, 1], received: {beta}"
+        self.beta = beta
         self.model = model
         self.estimated_variance_train = estimated_variance_train
         self.estimated_variance_test = estimated_variance_test
@@ -108,7 +116,7 @@ class Replicator(ABC):
         x_proposed: torch.Tensor,
         x_train: torch.Tensor,
         y_train: torch.Tensor,
-        model: BatchedMultiOutputGPyTorchModel,
+        model: RegressionModel,
         estimated_std: torch.Tensor,
     ):
         ...
