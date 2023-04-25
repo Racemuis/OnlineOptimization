@@ -1,9 +1,10 @@
-from typing import Tuple, Type, List, Callable, Optional
+from typing import Type, Callable, Optional
 
 import yaml
 import random
 import torch
 import numpy as np
+import pandas as pd
 from tqdm import tqdm
 
 import matplotlib.pyplot as plt
@@ -12,8 +13,9 @@ from src.utils.base import Source
 from src.utils.wrap_acqf import curry
 from src.models.trees import RandomForestWrapper
 from src.data.DataSimulator import DataSimulator
+from src.data.CVEP import CVEPSimulator
 from src.optimization.selectors import AveragingSelector, VarianceSelector
-from src.optimization.replicators import MaxReplicator
+from src.optimization.replicators import MaxReplicator, SequentialReplicator
 from src.optimization.pipelines import BayesOptPipeline
 from src.optimization import initializers
 from src.models.gaussian_processes import MostLikelyHeteroskedasticGP
@@ -39,103 +41,64 @@ warnings.filterwarnings("ignore", category=UserWarning)
 warnings.simplefilter(action="ignore", category=RuntimeWarning)
 
 
-def main():
+def run_simulation(
+    conf: dict, beta: float, regression_model: RegressionModel, simulator: DataSimulator,
+):
     """
     Simulate different objective functions based on BCI data to test the Bayesian Optimization pipeline.
     The simulations can be run for different runs to get a more stable estimate of the performance of the pipeline.
 
+    Args:
+     conf (dict): The optimization configuration file, containing:
+            - experiment (str): The name of the experiment (matches with a key in the data_config).
+
+            - participant (Optional[str]): The participant to read. If None is provided, all participants are read.
+                Default = None.
+
+            - condition (Optional[str]): The condition to read. If None is provided, all conditions are read.
+                Default = None.
+
+            - dimension (int): The dimensionality of the optimization problem.
+                Only 0 < dimension <= 3 are supported.
+     regression_model (RegressionModel): a regression model.
+     beta (float): The parameter that determines the exploration vs exploitation tradeoff. (0 <= beta <= 1)
+     simulator (Simulator): The simulator of the unknown optimization function.
+
     Returns:
-        None
+        np.ndarray: The auc scores of the simulated Bayesian optimization processes.
     """
-    # general optimization parameters
-    n_random_samples = 8
-    n_informed_samples = 15
-    n_runs = 15
-    plot = False
-
-    # data simulator parameters
-    experiment = "auditory_aphasia"
-    participant = "VPpblz_15_08_14"
-    condition = "6D"
-    data_config = yaml.load(open("./src/conf/data_config.yaml", "r"), Loader=yaml.FullLoader)
-    noise_functions = {
-        "σ = 0.05": lambda x: np.array([0.05]),
-        # "σ = 0.1": lambda x: np.array([0.1]),
-    }
-    dimension = 3
-
     # modules
-    initialization = initializers.Random
-    regression_models = {
-        "Random forest regression": RandomForestWrapper(n_estimators=10, random_state=44),
-        "Gaussian process regression": MostLikelyHeteroskedasticGP(normalize=False),
-        "Random sampling": None,
-    }
-    regression_key = "Random sampling"
-    regression_model = regression_models[regression_key]
-    acquisition = curry(BoundedUpperConfidenceBound, center=True, beta=0.3)
-    selector = VarianceSelector if dimension > 1 else AveragingSelector
-    replicator = MaxReplicator()
+    initialization = initializers.Sobol
+    acquisition = curry(BoundedUpperConfidenceBound, center=True, beta=beta)
+    selector = VarianceSelector if conf["dimension"] > 1 else AveragingSelector
+    replicator = SequentialReplicator(horizon=2)  # MaxReplicator()
 
-    results = np.empty((len(noise_functions), n_runs, n_informed_samples + n_random_samples, dimension))
-    auc_scores = np.empty((len(noise_functions), n_runs, n_informed_samples + n_random_samples))
-    simulator = None
+    # reset seed for each new simulation
+    np.random.seed(44)
+    random.seed(44)
+    torch.manual_seed(44)
 
-    for i, key in enumerate(noise_functions.keys()):
-        # reset seed for each new simulation
-        np.random.seed(44)
-        random.seed(44)
-        torch.manual_seed(44)
-
-        simulator = DataSimulator(
-            data_config=data_config,
-            experiment=experiment,
-            participant=participant,
-            condition=condition,
-            noise_function=noise_functions[key],
-            dimension=dimension,
-        )
-        result = simulate_batch(
-            simulator=simulator,
-            initialization=initialization,
-            regression_model=regression_model,
-            acquisition=acquisition,
-            selector=selector,
-            replicator=replicator,
-            n_runs=n_runs,
-            n_informed_samples=n_informed_samples,
-            n_random_samples=n_random_samples,
-            plot=plot,
-        )
-        results[i, ...] = result
-        print("Calculating results...", end='', flush=True)
-        for j in range(n_runs):
-            auc_scores[i, j, ...] = simulator.sample(x=result[j].squeeze(), noise=False)
-
-    paper_auc = simulator.get_paper_score()
-    print(" done!")
-
-    # plot results
-    for i, key in enumerate(noise_functions.keys()):
-        plt.plot(range(n_random_samples + n_informed_samples), np.mean(auc_scores[i, ...], axis=0), label=key)
-
-    plt.plot(
-        range(n_random_samples + n_informed_samples),
-        np.ones(n_random_samples + n_informed_samples) * paper_auc,
-        label="paper parameters",
-        c="tab:red",
-        linewidth=0.3
+    result = simulate_batch(
+        simulator=simulator,
+        initialization=initialization,
+        regression_model=regression_model,
+        acquisition=acquisition,
+        selector=selector,
+        replicator=replicator,
+        n_runs=conf["n_runs"],
+        n_informed_samples=conf["informed_sample_size"],
+        n_random_samples=conf["random_sample_size"],
+        beta=beta,
+        plot=conf["plot"],
     )
-    plt.xlabel("Number of samples")
-    plt.ylabel("AUC")
-    plt.legend()
-    plt.title(f"AUC scores obtained with 5 fold cross validation\n"
-              f"{participant}, {condition} - {regression_key}\nrandom samples: {n_random_samples}, "
-              f"informed samples: {n_informed_samples}"
-              f", number of runs: {n_runs}"
-              f", number of dimensions: {dimension}"
-              )
-    plt.show()
+    print("Calculating results...", end="", flush=True)
+    # allocate memory
+    auc_scores = np.empty((conf["n_runs"], conf["informed_sample_size"] + conf["random_sample_size"]))
+    for j in range(conf["n_runs"]): # TODO: Set CV to true on the cluster
+        auc_scores[j, ...] = simulator.sample(x=result[j].squeeze(), noise=False, cv=False)
+    print(" done!")
+    # to_csv(auc_scores, dimension, noise_functions, regression_key, result)
+    return auc_scores
 
 
 def simulate_batch(
@@ -148,6 +111,7 @@ def simulate_batch(
     n_runs: int,
     n_informed_samples: int,
     n_random_samples: int,
+    beta: float,
     plot: bool,
 ) -> np.ndarray:
     """
@@ -165,6 +129,7 @@ def simulate_batch(
         n_runs (int): The number of runs to simulate.
         n_informed_samples (int): The number of informed samples to take.
         n_random_samples (int): The number of random samples to take.
+        beta (float): The parameter that determines the exploration vs exploitation tradeoff.
         plot (bool): True if the intermediate runs should be plotted.
 
     Returns:
@@ -173,13 +138,14 @@ def simulate_batch(
     """
     batch_results = np.zeros((n_runs, n_random_samples + n_informed_samples, simulator.dimension))
 
-    for i in tqdm(range(n_runs), desc="Simulating batch"):
+    for i in tqdm(range(n_runs), desc=f"Simulating batch for beta={beta}"):
         pipe = BayesOptPipeline(
             initialization=initialization(domain=np.array(simulator.get_domain(), dtype=float)),
             regression_model=regression_model,
             acquisition=acquisition,
             selector=selector,
             replicator=replicator,
+            beta=beta,
         )
         batch_results[i, ...] = pipe.optimize(
             source=simulator, random_sample_size=n_random_samples, informed_sample_size=n_informed_samples, plot=plot
@@ -188,5 +154,91 @@ def simulate_batch(
     return batch_results
 
 
+def to_csv(auc_scores: np.ndarray, dimension: int, noise_functions: dict, regression_key: str, results: np.ndarray):
+    data = {}
+    for i, key in enumerate(noise_functions.keys()):
+        for j in range(dimension):
+            data.update({f"noise_function_{key}_parameter{j}": results[i, :, -1, j].squeeze()})
+        data.update({f"noise_function_{key}_auc": auc_scores[i, :, -1].squeeze()})
+    df = pd.DataFrame(data=data)
+    df.to_csv(path_or_buf=fr"./{regression_key}_{dimension}_parameters.csv", index=False)
+
+
+def print_conf(config: dict):
+    print("Simulating BCI data")
+    print(f"\tdimensionality: {config['dimension']}")
+    print(f"\trandom samples: {config['random_sample_size']}")
+    print(f"\tinformed samples: {config['informed_sample_size']}")
+    print(
+        f"\texperiment: {config['experiment']}; participant: {config['participant']}; condition: {config['condition']}"
+    )
+
+
 if __name__ == "__main__":
-    main()
+    conf = yaml.load(open("./src/conf/bo_config.yaml", "r"), Loader=yaml.FullLoader)
+    data_config = yaml.load(open("./src/conf/data_config.yaml", "r"), Loader=yaml.FullLoader)
+    print_conf(config=conf)
+
+    if conf['experiment'] == "auditory_aphasia":
+        simulator = DataSimulator(data_config=data_config, bo_config=conf, noise_function=None,)
+        paper_auc = simulator.get_paper_score()
+    elif conf['experiment'].upper() == "CVEP":
+        simulator = CVEPSimulator(data_config=data_config, bo_config=conf, trial=True,)
+        paper_auc = simulator.get_paper_score()
+    else:
+        print(f"The chosen experiment \"{conf['experiment']}\" is not supported, defaulting to \"auditory_aphasia\"")
+        simulator = DataSimulator(data_config=data_config, bo_config=conf, noise_function=None,)
+        paper_auc = simulator.get_paper_score()
+
+    # loop over these
+    regression_models = {
+        "Random forest regression": RandomForestWrapper(n_estimators=10, random_state=44),
+        "Gaussian process regression": MostLikelyHeteroskedasticGP(normalize=False),
+        "Random sampling": None,
+    }
+
+    fig, axes = plt.subplots(1, 2, sharey="all")
+
+    betas = np.round(np.linspace(start=0, stop=1, num=11), decimals=1)
+    boxplot_data = np.zeros((betas.shape[0], conf["n_runs"]))
+
+    print(f"Performing grid-search for beta in {np.linspace(0, 1, 11)}")
+    for i, beta in enumerate(betas):
+        auc_score = run_simulation(
+            conf=conf, beta=beta, regression_model=regression_models[conf["regression_key"]], simulator=simulator,
+        )
+
+        # plot results
+        axes[0].plot(
+            range(conf["random_sample_size"] + conf["informed_sample_size"]),
+            np.mean(auc_score, axis=0),
+            label=f"beta: {beta:.1f}",
+        )
+
+        # store boxplot data
+        boxplot_data[i, :] = auc_score[:, -1]
+
+    axes[0].plot(
+        range(conf["random_sample_size"] + conf["informed_sample_size"]),
+        np.ones(conf["random_sample_size"] + conf["informed_sample_size"]) * paper_auc,
+        label="paper parameters",
+        c="tab:red",
+        linewidth=0.3,
+    )
+    axes[0].set_xlabel("Number of samples")
+    axes[0].set_ylabel("AUC")
+    axes[0].legend()
+    axes[0].set_title(
+        f"AUC scores obtained with 5 fold cross validation\n"
+        f"{conf['participant']}, {conf['condition']} - {conf['regression_key']}"
+        f"\nrandom samples: {conf['random_sample_size']}, "
+        f"informed samples: {conf['informed_sample_size']}"
+        f", number of runs: {conf['n_runs']}"
+        f", number of dimensions: {conf['dimension']}"
+    )
+
+    axes[1].boxplot([d.flatten() for d in boxplot_data])
+    axes[1].set_xlabel("Beta")
+    axes[1].set_xticklabels(betas)
+    axes[1].set_title(f"Eventual proposals by the optimization algorithm")
+    plt.show()
