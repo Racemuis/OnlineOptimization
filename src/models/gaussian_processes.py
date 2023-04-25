@@ -61,9 +61,11 @@ class MostLikelyHeteroskedasticGP(RegressionModel):
         self.normalize = normalize
         self._composite_model = None
         self._noise_model = None
+        self._mll = None
         self.is_trained = False
         self.log_noise = False
         self._with_grad = True
+        self.length_scales = []
 
     @property
     def with_grad(self) -> bool:
@@ -80,7 +82,7 @@ class MostLikelyHeteroskedasticGP(RegressionModel):
         Returns:
             FixedNoiseGP: A fitted instance of a FixedNoiseGP, trained as Most Likely GP regression algorithm.
         """
-        g2 = g3 = None
+        g2 = g3 = mll_g3 = None
         optimization_problem = False
 
         if self.normalize:
@@ -169,7 +171,7 @@ class MostLikelyHeteroskedasticGP(RegressionModel):
 
             try:
                 g3.train()
-                _ = fit_gpytorch_mll(mll_g3)
+                mll_g3 = fit_gpytorch_mll(mll_g3)
                 g3.eval()
 
             except RuntimeError:
@@ -182,9 +184,14 @@ class MostLikelyHeteroskedasticGP(RegressionModel):
             # Set g1 <- g3 for the next iteration
             g1 = g3
 
+        # update all attributes
+        self._mll = mll_g3
         self._noise_model = g2
         self._composite_model = g3
         self.is_trained = True
+
+        # save final length scale
+        self.length_scales.append(g3.covar_module.base_kernel.lengthscale.squeeze().detach().cpu().numpy())
 
         return g3
 
@@ -207,9 +214,9 @@ class MostLikelyHeteroskedasticGP(RegressionModel):
             outcome_transform=self.outcome_transform,
             covar_module=covar_module,
         )
-        # g2.likelihood.noise_covar.register_constraint("raw_noise", GreaterThan(1e-5))
         mll_g2 = ExactMarginalLogLikelihood(likelihood=g2.likelihood, model=g2)
         mll_g2 = mll_g2.to(x_train)
+
         # Fit g2
         g2.train()
         _ = fit_gpytorch_mll(mll_g2)
@@ -244,6 +251,49 @@ class MostLikelyHeteroskedasticGP(RegressionModel):
             return torch.sqrt(torch.exp(self.get_noise_model().posterior(x_train).mean))
         else:
             return torch.sqrt(self.get_noise_model().posterior(x_train).mean)
+
+    def get_observed_information(self, x_train: torch.Tensor, y_train: torch.Tensor) -> torch.Tensor:
+        """
+        Calculate the negative second derivative of the marginal log-likelihood of the fitted model.
+
+        Fisher information is expected value of observed information, observed information is
+        typically estimated at the MLE (= Fisher Information) https://en.wikipedia.org/wiki/Observed_information
+
+        TODO: The hessian is now calculated with respect to the input data (x_train and y_train). However, it could be
+          more informative to calculate the derivative of marginal log likelihood with respect to the length scale.
+
+        Args:
+            x_train (torch.Tensor): A `batch_shape x n x d` tensor of training features.
+            y_train (torch.Tensor): A `batch_shape x n x m` tensor of training observations.
+
+        Returns:
+            torch.Tensor: The Hessian matrix of the marginal log-likelihood of the model given the data.
+        """
+        return -torch.autograd.functional.hessian(self.get_marginal_log_likelihood, torch.stack((x_train, y_train)))
+
+    def get_marginal_log_likelihood(self, params: torch.Tensor) -> torch.Tensor:
+        """
+        Calculate the marginal log-likelihood of the fitted model over the training data x_train dna y_train.
+
+        Args:
+            params (torch.Tensor): A stacked vector of
+                - x_train (torch.Tensor): A `batch_shape x n x d` tensor of training features.
+                - y_train (torch.Tensor): A `batch_shape x n x m` tensor of training observations.
+                That can be created using torch.stack((x_train, y_train)).
+
+        Returns:
+            torch.Tensor: The marginal log-likelihood of the fitted model given the data.
+        """
+        x_train = params[0, ...]
+        y_train = params[1, ...]
+
+        if self.is_trained:
+            self._composite_model.eval()
+            posterior_dist = self._composite_model(x_train)
+            return self._mll.forward(function_dist=posterior_dist, target=y_train).sum()
+        else:
+            print("The model has not been trained yet. Consider training the models first.")
+            return torch.tensor([0])
 
     def plot(
         self,
