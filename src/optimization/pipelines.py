@@ -25,6 +25,7 @@ class BayesOptPipeline:
         ],
         selector: Type[Selector],
         replicator: Replicator,
+        beta: Optional[float] = 0.3,
     ):
         """
 
@@ -42,6 +43,7 @@ class BayesOptPipeline:
         self.acquisition = acquisition
         self.replicator = replicator
         self.selector = selector
+        self.beta = beta
         self.replicated_samples = []
         self.previous_posterior = None
 
@@ -76,7 +78,6 @@ class BayesOptPipeline:
         # Bayesian optimization - phase 1: Random sampling
         x_train = self.initialization.forward(n_samples=random_sample_size)
         y_train = torch.tensor(source.sample(x=x_train.numpy().squeeze())).unsqueeze(1)
-
         # Bayesian optimization - phase 2: informed sampling
         if self.regression_model is not None:
             for i in range(informed_sample_size):
@@ -92,13 +93,17 @@ class BayesOptPipeline:
                     print(f"Iteration {i} - suggested candidate for maximum: {x_sample[0, 0]:.2f}.")
 
                 selector = self.selector(
+                    beta=self.beta,
                     model=self.regression_model.get_model(),
                     estimated_variance_train=self.regression_model.get_estimated_std(x_train=x_train).cpu().detach(),
                     estimated_variance_test=self.regression_model.get_estimated_std(x_train=x_test).cpu().detach(),
                 )
-                intermediate_results[random_sample_size+i, ...] = selector.forward(
+                intermediate_results[random_sample_size + i, ...] = selector.forward(
                     x_train=x_train, y_train=y_train, x_test=x_test, x_replicated=self.replicated_samples
                 )
+
+        # print(self.regression_model.get_observed_information(x_train=x_train, y_train=y_train))
+        # print(np.var(np.array(self.regression_model.length_scales)), intermediate_results[-1, ...])
 
         if plot:
             self.regression_model.plot(
@@ -116,8 +121,10 @@ class BayesOptPipeline:
         # Use the selector to get a verdict for the random samples
         size = random_sample_size if self.regression_model is not None else random_sample_size + informed_sample_size
         for i in range(size):
-            selector = NaiveSelector()
-            intermediate_results[i, ...] = selector.forward(x_train=x_train[:i+1, ...], y_train=y_train[:i+1, ...])
+            selector = NaiveSelector(beta=self.beta)
+            intermediate_results[i, ...] = selector.forward(
+                x_train=x_train[: i + 1, ...], y_train=y_train[: i + 1, ...]
+            )
 
         return intermediate_results
 
@@ -154,12 +161,13 @@ class BayesOptPipeline:
             x_proposed=x_proposed,
             x_train=x_train,
             y_train=y_train,
-            model=fitted_model,
+            model=self.regression_model,
             estimated_std=self.regression_model.get_estimated_std(x_train=x_test),
         )
 
         # Store replicated samples
         if not torch.equal(x_sample, x_proposed):
+            print(f"Replicated: {x_sample}")
             self.replicated_samples.append(x_sample)
 
         posterior = fitted_model.posterior(x_test).mean.cpu().detach().numpy().squeeze()
