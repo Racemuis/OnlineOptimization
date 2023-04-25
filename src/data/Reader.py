@@ -81,7 +81,7 @@ class Reader:
             for condition in conditions:
 
                 # Find files
-                eeg_filepaths = self.get_file_list(data_config["data_path"], session, condition)
+                eeg_filepaths = self.get_file_list(data_config[self.experiment]["data_path"], session, condition)
                 stimulus_ids, class_ids = self.get_marker_format(config=data_config)
 
                 # Read, preprocess, and slice the data
@@ -201,8 +201,7 @@ class Reader:
             X[:, :, i] = epoch.get_data()[:, :, idx_range].mean(axis=2)
         return X
 
-    @staticmethod
-    def get_marker_format(config: dict) -> Tuple[dict, dict]:
+    def get_marker_format(self, config: dict) -> Tuple[dict, dict]:
         """
         Get the marker format given the dataset.
 
@@ -213,7 +212,7 @@ class Reader:
             dict: the stimulus identifiers.
             dict: the class identifiers.
         """
-        if "auditory_aphasia" in config["data_path"]:
+        if "auditory_aphasia" in config[self.experiment]["data_path"]:
             stimulus_ids = dict([(f"Stimulus/S1{i}{j}", i) for j in range(7) for i in range(2)])
             class_ids = {"Target": 1, "Non-target": 0}
             return stimulus_ids, class_ids
