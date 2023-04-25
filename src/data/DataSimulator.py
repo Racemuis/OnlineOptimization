@@ -2,7 +2,8 @@ from typing import Union, Callable, Optional
 
 import numpy as np
 
-from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import cross_val_score, train_test_split
+from sklearn.metrics import roc_auc_score
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 
 from .Reader import Reader
@@ -20,42 +21,43 @@ from ..utils.base import Source
 
 class DataSimulator(Source):
     """A class that can be used to simulate BCI data."""
+
     def __init__(
         self,
         data_config: dict,
-        experiment: str,
-        participant: str,
-        condition: str,
-        noise_function: Callable[[np.ndarray], np.ndarray],
-        dimension: int,
+        bo_config: dict,
+        noise_function: Optional[Callable[[np.ndarray], np.ndarray]],
         n_intervals: int = 5,
     ):
         """
 
         Args:
             data_config (dict): The data configuration file.
-            experiment (str): The name of the experiment (matches with a key in the data_config).
-            participant (Optional[str]): The participant to read. If None is provided, all participants are read.
-                Default = None.
-            condition (Optional[str]): The condition to read. If None is provided, all conditions are read.
-                Default = None.
+            bo_config (dict): The optimization configuration file, containing:
+                - experiment (str): The name of the experiment (matches with a key in the data_config).
+                - participant (Optional[str]): The participant to read. If None is provided, all participants are read.
+                    Default = None.
+                - condition (Optional[str]): The condition to read. If None is provided, all conditions are read.
+                    Default = None.
+                - dimension (int): The dimensionality of the optimization problem.
+                    Only 0 < dimension <= 3 are supported.
             noise_function (Callable[[np.ndarray], np.ndarray]): The noise function describing the scale of the Gaussian
              distribution that is superimposed on the simulated data.
-            dimension (int): The dimensionality of the optimization problem. Only 0 < dimension <= 3 are supported.
             n_intervals (int): The number of temporal intervals that should be averaged over within the epoch.
         """
-        assert dimension <= 3, "Only the dimensionalities of 1, 2 and 3 are supported."
+        assert bo_config['dimension'] <= 3 or bo_config['dimension'] == 7, \
+            "Only the dimensionalities of 1, 2 and 3 are supported."
         super().__init__()
         self.data_config = data_config
-        self.experiment = experiment
-        self.participant = participant
-        self.condition = condition
+        self.experiment = bo_config['experiment']
+        self.participant = bo_config['participant']
+        self.condition = bo_config['condition']
         self._noise_function = noise_function
-        self._dimension = dimension
+        self._dimension = bo_config['dimension']
         self.n_intervals = n_intervals
 
         self.reader = Reader(self.experiment)
-        print("Reading data...", end='', flush=True)
+        print("Reading data...", end="", flush=True)
         self.epoch_dict = self.reader.read(
             data_config=self.data_config, participant=self.participant, condition=self.condition, verbose=False
         )
@@ -73,7 +75,9 @@ class DataSimulator(Source):
     def objective_function(self):
         return None
 
-    def sample(self, x: np.ndarray, info: bool = False, noise: bool = True) -> Union[float, np.ndarray]:
+    def sample(
+        self, x: np.ndarray, info: bool = False, noise: bool = True, cv: bool = False
+    ) -> Union[float, np.ndarray]:
         """
         Sample the objective function for the value 'x'.
 
@@ -81,6 +85,8 @@ class DataSimulator(Source):
             x (Union[float, np.ndarray]): The value that is used as an input for the objective function.
             info (bool): True if the (noisy) value of the objective function should be printed.
             noise (bool): True if noise should be superimposed on the sampled value of the objective function.
+                          Default: True
+            cv (bool): True if cross validation should be used to calculate the AUC. Default: False
 
         Returns:
             Union[float, np.ndarray]: The value of the (noisy) objective function at `x`.
@@ -88,17 +94,18 @@ class DataSimulator(Source):
         if not x.shape == (1, 1) and x.squeeze().shape[0] != self.dimension:
             results = np.zeros(x.shape[0])
             for i, sample in enumerate(x):
-                results[i] = self.single_sample(x=sample, noise=noise)
+                results[i] = self.single_sample(x=sample, noise=noise, cv=cv)
             return results
-        return self.single_sample(x=x, noise=noise)
+        return self.single_sample(x=x, noise=noise, cv=cv)
 
-    def single_sample(self, x: np.ndarray, noise: bool) -> float:
+    def single_sample(self, x: np.ndarray, noise: bool, cv: bool) -> float:
         """
         Take a single sample of the objective function for the value of `x`.
 
         Args:
             x (Union[float, np.ndarray]): The value that is used as an input for the objective function.
             noise (bool): True if noise should be superimposed on the sampled value of the objective function.
+            cv (bool): True if cross validation should be used to calculate the AUC. Default: False
 
         Returns:
             Union[float, np.ndarray]: The value of the (noisy) objective function at `x`.
@@ -107,8 +114,6 @@ class DataSimulator(Source):
         if self.dimension == 1:
             shrinkage = x
             boundaries = np.array([0.1, 0.17, 0.23, 0.3, 0.41, 0.5])
-            # shrinkage = "auto"
-            # boundaries = np.array([self.get_item(x), 0.17, 0.23, 0.3, 0.41, 0.5])
 
         elif self.dimension == 2:
             shrinkage, temporal_start = x.squeeze()
@@ -119,6 +124,11 @@ class DataSimulator(Source):
             boundaries = np.zeros(self.n_intervals + 1)
             boundaries[0] = temporal_start
             boundaries[1:] = temporal_interval
+            boundaries = np.cumsum(boundaries, axis=0)
+
+        elif self.dimension == 7:
+            shrinkage, temporal_start, iv1, iv2, iv3, iv4, iv5 = x.squeeze()
+            boundaries = np.array([temporal_start, iv1, iv2, iv3, iv4, iv5])
             boundaries = np.cumsum(boundaries, axis=0)
 
         else:
@@ -133,14 +143,26 @@ class DataSimulator(Source):
         # Initialize classifier with estimated shrinkage parameter
         lda = LinearDiscriminantAnalysis(solver="lsqr", shrinkage=self.get_item(shrinkage))
 
-        # Evaluate classifier, save average score over folds
-        f_x = cross_val_score(lda, x_train, y_train, cv=5, scoring="roc_auc").mean().squeeze()
+        # Simulate noise by taking random subsets of the training data
+        if noise and self.noise_function is None:
+            x_sampled, _, y_sampled, _ = train_test_split(x_train, y_train, train_size=450)
+            x_train = x_sampled
+            y_train = y_sampled
 
-        noise_scale = self.noise_function(shrinkage)
+        if cv:
+            # Evaluate classifier, save average score over folds
+            f_x = cross_val_score(lda, x_train, y_train, cv=5, scoring="roc_auc").mean().squeeze()
+        else:
+            # Evaluate classifier over a single fold
+            x_train, x_test, y_train, y_test = train_test_split(x_train, y_train)
+            lda.fit(x_train, y_train)
+            f_x = roc_auc_score(y_test, lda.predict_proba(x_test)[:, 1])
 
-        if noise and noise_scale > 0.0:
-            y_x = max(0, min(1, np.random.normal(loc=f_x, scale=noise_scale)))
-            return y_x
+        # if self.noise_function is not None:
+        #     noise_scale = self.noise_function(shrinkage)
+        #     if noise and noise_scale > 0.0:
+        #         y_x = max(0, min(1, np.random.normal(loc=f_x, scale=noise_scale)))
+        #         return y_x
         return f_x
 
     def get_paper_score(self):
@@ -178,7 +200,11 @@ class DataSimulator(Source):
             [
                 [0, 1],  # shrinkage
                 [0, 0.1],  # temporal averaging start
-                [0.03, 0.4/self.n_intervals],  # temporal averaging interval
+                [0.03, 0.4 / self.n_intervals],  # temporal averaging interval
+                [0.03, 0.4 / self.n_intervals],  # temporal averaging interval
+                [0.03, 0.4 / self.n_intervals],  # temporal averaging interval
+                [0.03, 0.4 / self.n_intervals],  # temporal averaging interval
+                [0.03, 0.4 / self.n_intervals],  # temporal averaging interval
                 [1, 25],  # decimation
                 [-0.2, 0],  # baseline correction (lower bound)
                 [-0.1, 0.1],  # baseline correction (upper bound)
