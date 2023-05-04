@@ -82,8 +82,8 @@ class SequentialReplicator(Replicator):
         """
         Perform the lookahead strategy described in [1, p11]. The strategy has been implemented in a recursive fashion.
 
-        [1] Binois, M., Huang, J., Gramacy, R. B., & Ludkovski, M. (2019). Replication or exploration? Sequential design for
-        stochastic simulation experiments. Technometrics, 61(1), 7-23.
+        [1] Binois, M., Huang, J., Gramacy, R. B., & Ludkovski, M. (2019). Replication or exploration? Sequential design
+        for stochastic simulation experiments. Technometrics, 61(1), 7-23.
 
         Args:
             horizon (int): The lookahead horizon.
@@ -105,33 +105,15 @@ class SequentialReplicator(Replicator):
         x_proposed = x_proposed.cpu().detach().numpy()
         r_proposed = r_proposed.cpu().detach().numpy()
 
-        # TODO: Tests do not work :(, something wrong with the block partition inverse, probably matrix multiplication
-        #  order
-        # _K_n = self.K_n(x_mu=x_mu, r=r_mu, model=model)
-        # _K_i = np.linalg.inv(_K_n)
-        #
-        # _K_next = self.K_next(K=_K_n, x_tilde=x_proposed, x_mu=x_mu, r_tilde=r_proposed, model=model)
-        # _K_i_next = self.K_inv_next(K_i=_K_i, x_mu=x_mu, x_tilde=x_proposed, r_tilde=r_proposed, model=model)
-        #
-        # print("\nMethode 1")
-        # print(np.linalg.inv(_K_next))
-        # print()
-        # print("Methode 2")
-        # print(_K_i_next)
-        #
-        # print()
-        # print(np.linalg.inv(_K_next)@_K_next)
-        # print()
-        # print(_K_i_next@_K_next)
-
+        # initiate recursive call
         path, score = self._rollout(
             horizon=horizon,
             x_mu=x_mu,
             x_tilde=x_proposed,
             r_mu=r_mu,
             r_tilde=r_proposed,
-            _K_n=self.K_n(x_mu=x_mu, r=r_mu, model=model),
-            _W_n=self.W_mat_52_n(x_mu=x_mu, theta=model.covar_module.base_kernel.lengthscale[0]),
+            K_n_inv=np.linalg.inv(self.get_covariance(x_mu=x_mu, r=r_mu, model=model)),
+            W_n=self.W_mat_52_n(x_mu=x_mu, theta=model.covar_module.base_kernel.lengthscale[0]),
             model=model,
             path=[],
             replicated_samples=[],
@@ -146,8 +128,8 @@ class SequentialReplicator(Replicator):
         x_tilde: np.ndarray,
         r_mu: np.ndarray,
         r_tilde: np.ndarray,
-        _K_n: np.ndarray,
-        _W_n: np.ndarray,
+        K_n_inv: np.ndarray,
+        W_n: np.ndarray,
         model: BatchedMultiOutputGPyTorchModel,
         path: List[np.ndarray],
         replicated_samples: List[np.ndarray],
@@ -166,8 +148,8 @@ class SequentialReplicator(Replicator):
             x_tilde (np.ndarray):  The new sample, a vector of shape (d, ).
             r_mu (np.ndarray): The variance of the noise distribution around x_mu.
             r_tilde (np.ndarray): The variance of the noise distribution around x_tilde.
-            _K_n (np.ndarray): The covariance matrix of the data-generating mechanism according to the model.
-            _W_n (np.ndarray): The double integral of the matérn 5/2 kernel over a [0,1]^d domain.
+            K_n_inv (np.ndarray): The inverse covariance matrix of the data-generating mechanism.
+            W_n (np.ndarray): The double integral of the matérn 5/2 kernel over a [0,1]^d domain.
             model (BatchedMultiOutputGPyTorchModel): The trained Gaussian process.
             path (List[np.ndarray]): The path that is rolled out by the recursive call.
             replicated_samples (List[np.ndarray]): The samples that have already been replicated within this call.
@@ -177,33 +159,34 @@ class SequentialReplicator(Replicator):
             List[np.ndarray]: The final path.
             float: The IMSPE that is associated with the final path.
         """
-        # print(f"Horizon: {horizon}\npath: {path}\n")
         E = model.covar_module.base_kernel.lengthscale[0].numpy()
 
         if accepted_proposal:
             # Find the best replicate
-            min_imspe, min_x, min_r = self.get_best_replicate(E, _K_n, _W_n, model, r_mu, x_mu, replicated_samples)
+            min_imspe, min_x, min_r = self.get_best_replicate(E, K_n_inv, W_n, model, r_mu, x_mu, replicated_samples)
             replicate_path = deepcopy(path)
             replicate_path.append(min_x)
 
+            # update lists (bit of a cumbersome method to make sure that deep copies are created)
             replicated_samples_new = deepcopy(replicated_samples)
             replicated_samples_new.append(min_x)
 
             if horizon == 0:  # Return the path with the best replicate
-                # print(f"Submitting path: {replicate_path}, score: {min_imspe}")
                 return replicate_path, min_imspe
             else:
                 # Start recursion with one tail
-                _K_next = self.K_next(K=_K_n, x_tilde=min_x, x_mu=x_mu, r_tilde=min_r, model=model)
-                _W_next = self.W_mat_52_next(W=_W_n, x_tilde=min_x, x_mu=x_mu, theta=E)
+                K_next_inv = self.get_next_inverse_covariance(
+                    K_i=K_n_inv, x_mu=x_mu, x_tilde=min_x, r_tilde=min_r, model=model
+                )
+                W_next = self.W_mat_52_next(W=W_n, x_tilde=min_x, x_mu=x_mu, theta=E)
                 path_left_tail, score = self._rollout(
                     horizon=horizon - 1,
                     x_mu=np.vstack([x_mu, min_x]),  # vstack with previous
                     x_tilde=x_tilde,
                     r_mu=np.vstack([r_mu, min_r]),
                     r_tilde=r_tilde,
-                    _K_n=_K_next,
-                    _W_n=_W_next,
+                    K_n_inv=K_next_inv,
+                    W_n=W_next,
                     model=model,
                     path=replicate_path,
                     replicated_samples=replicated_samples_new,
@@ -212,19 +195,19 @@ class SequentialReplicator(Replicator):
                 return path_left_tail, score
         else:
             # Get the score for an accepted sample
-            _K_next = self.K_next(K=_K_n, x_tilde=x_tilde, x_mu=x_mu, r_tilde=r_tilde, model=model)
-            _W_next = self.W_mat_52_next(W=_W_n, x_tilde=x_tilde, x_mu=x_mu, theta=E)
+            K_next_inv_accepted = self.get_next_inverse_covariance(
+                K_i=K_n_inv, x_mu=x_mu, x_tilde=x_tilde, r_tilde=r_tilde, model=model
+            )
+            W_next_accepted = self.W_mat_52_next(W=W_n, x_tilde=x_tilde, x_mu=x_mu, theta=E)
 
-            score = self.IMSPE(E=E, K_i=np.linalg.inv(_K_next), W=_W_next)
+            score = self.IMSPE(E=E, K_i=K_next_inv_accepted, W=W_next_accepted)
 
             path_accepted = deepcopy(path)
             path_accepted.append(x_tilde)
 
             if horizon == 0:  # Return the path with the accepted sample
-                # print(f"Submitting path: {path_accepted}, score: {score}")
                 return path_accepted, score
-            else:
-                # Start recursion with two tails
+            else:  # Start recursion with two tails
                 # 1: Start the path for the accepted sample
                 path_accepted, score_accepted = self._rollout(
                     horizon=horizon - 1,
@@ -232,8 +215,8 @@ class SequentialReplicator(Replicator):
                     x_tilde=x_tilde,
                     r_mu=np.vstack([r_mu, r_tilde]),
                     r_tilde=r_tilde,
-                    _K_n=_K_next,
-                    _W_n=_W_next,
+                    K_n_inv=K_next_inv_accepted,
+                    W_n=W_next_accepted,
                     model=model,
                     path=path_accepted,
                     replicated_samples=replicated_samples,
@@ -241,9 +224,13 @@ class SequentialReplicator(Replicator):
                 )
 
                 # 2: Start a path with the best replicate
-                min_imspe, min_x, min_r = self.get_best_replicate(E, _K_n, _W_n, model, r_mu, x_mu, replicated_samples)
-                _K_next = self.K_next(K=_K_n, x_tilde=min_x, x_mu=x_mu, r_tilde=min_r, model=model)
-                _W_next = self.W_mat_52_next(W=_W_n, x_tilde=min_x, x_mu=x_mu, theta=E)
+                min_imspe, min_x, min_r = self.get_best_replicate(
+                    E, K_n_inv, W_n, model, r_mu, x_mu, replicated_samples
+                )
+                K_next_inv_repl = self.get_next_inverse_covariance(
+                    K_i=K_n_inv, x_mu=x_mu, x_tilde=min_x, r_tilde=min_r, model=model
+                )
+                W_next_repl = self.W_mat_52_next(W=W_n, x_tilde=min_x, x_mu=x_mu, theta=E)
 
                 path_rejected = deepcopy(path)
                 path_rejected.append(min_x)  # add the replicate to the path
@@ -257,8 +244,8 @@ class SequentialReplicator(Replicator):
                     x_tilde=x_tilde,
                     r_mu=np.vstack([r_mu, min_r]),
                     r_tilde=r_tilde,
-                    _K_n=_K_next,
-                    _W_n=_W_next,
+                    K_n_inv=K_next_inv_repl,
+                    W_n=W_next_repl,
                     model=model,
                     path=path_rejected,
                     replicated_samples=replicated_samples_new,
@@ -274,7 +261,7 @@ class SequentialReplicator(Replicator):
     def get_best_replicate(
         self,
         E: np.ndarray,
-        _K_n: np.ndarray,
+        K_n_inv: np.ndarray,
         _W_n: np.ndarray,
         model: BatchedMultiOutputGPyTorchModel,
         r_mu: np.ndarray,
@@ -286,7 +273,7 @@ class SequentialReplicator(Replicator):
 
         Args:
             E (np.ndarray): The length scale parameter of the kernel.
-            _K_n (np.ndarray): The covariance matrix of the data-generating mechanism according to the model.
+            K_n_inv (np.ndarray): The inverse covariance matrix of the data-generating mechanism according to the model.
             _W_n (np.ndarray): The double integral of the matérn 5/2 kernel over a [0,1]^d domain.
             model (BatchedMultiOutputGPyTorchModel): The trained Gaussian process.
             r_mu (np.ndarray): The variance of the noise distribution around x_mu.
@@ -300,22 +287,18 @@ class SequentialReplicator(Replicator):
         min_imspe = np.inf
         min_x = x_mu[0]
         min_r = r_mu[0]
-        # print("Finding best replicate")
-        # print(replicated_samples)
         for x, r in zip(x_mu, r_mu):
             if len(replicated_samples) > 0 and np.any(np.all(x == replicated_samples, axis=1)):
                 continue
-            _K_next = self.K_next(K=_K_n, x_tilde=x, x_mu=x_mu, r_tilde=r, model=model)
-            _W_next = self.W_mat_52_next(W=_W_n, x_tilde=x, x_mu=x_mu, theta=E)
-            score = self.IMSPE(E=E, K_i=np.linalg.inv(_K_next), W=_W_next)
-
-            # print(f"x: {x}, score: {score}, k.shape: {_K_next.shape}")
+            W_next = self.W_mat_52_next(W=_W_n, x_tilde=x, x_mu=x_mu, theta=E)
+            K_inv_next = self.get_next_inverse_covariance(K_i=K_n_inv, x_mu=x_mu, x_tilde=x, r_tilde=r, model=model)
+            score = self.IMSPE(E=E, K_i=K_inv_next, W=W_next)
 
             if score < min_imspe:
                 min_imspe = score
                 min_x = x
                 min_r = r
-        # print()
+
         return min_imspe, min_x, min_r
 
     @staticmethod
@@ -347,7 +330,7 @@ class SequentialReplicator(Replicator):
         return np.mean(E) - np.trace(np.matmul(K_i, W))
 
     @staticmethod
-    def K_n(x_mu: np.ndarray, model: BatchedMultiOutputGPyTorchModel, r: Optional[np.ndarray]) -> np.ndarray:
+    def get_covariance(x_mu: np.ndarray, model: BatchedMultiOutputGPyTorchModel, r: Optional[np.ndarray]) -> np.ndarray:
         """
         Calculate the covariance matrix :math:`K_n` of the data-generating mechanism :math:`Y \sim \mathcal{N}(0, K_n)`
         for the noisy observations Y, according to the model [1]. That is, K is an N x N matrix where each entry
@@ -375,7 +358,7 @@ class SequentialReplicator(Replicator):
         return K
 
     @staticmethod
-    def K_next(
+    def get_next_covariance(
         K: np.ndarray,
         x_tilde: np.ndarray,
         x_mu: np.ndarray,
@@ -413,7 +396,7 @@ class SequentialReplicator(Replicator):
         return _K_next
 
     @staticmethod
-    def K_inv_next(
+    def get_next_inverse_covariance(
         K_i: np.ndarray,
         x_mu: np.ndarray,
         x_tilde: np.ndarray,
@@ -458,7 +441,7 @@ class SequentialReplicator(Replicator):
         g_tilde = (-1 / var_n_tilde) * np.dot(K_i, K_row)
 
         K_i_next = np.ones((K_i.shape[0] + 1, K_i.shape[1] + 1))
-        K_i_next[: K_i.shape[0], : K_i.shape[0]] = K_i + (1/var_n_tilde) * (K_i@K_row)@(K_row.T@K_i)  # np.dot(g_tilde, g_tilde.T) * var_n_tilde
+        K_i_next[: K_i.shape[0], : K_i.shape[0]] = K_i + np.outer(g_tilde, g_tilde.T) * var_n_tilde
         K_i_next[K_i.shape[0], : K_i.shape[0]] = g_tilde.T
         K_i_next[: K_i.shape[0], K_i.shape[0]] = g_tilde
         K_i_next[K_i.shape[0], K_i.shape[0]] = 1 / var_n_tilde
