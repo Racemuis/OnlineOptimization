@@ -1,4 +1,6 @@
+import os
 from typing import Type, Callable, Optional
+from pathlib import Path
 
 import yaml
 import random
@@ -9,11 +11,11 @@ from tqdm import tqdm
 
 import matplotlib.pyplot as plt
 
-from src.utils.base import Source
+from src.utils.base import Source, ConvergenceMeasure
 from src.utils.wrap_acqf import curry
 from src.models.trees import RandomForestWrapper
 from src.data.DataSimulator import DataSimulator
-from src.data.CVEP import CVEPSimulator
+# from src.data.CVEP import CVEPSimulator
 from src.optimization.selectors import AveragingSelector, VarianceSelector
 from src.optimization.replicators import MaxReplicator, SequentialReplicator
 from src.optimization.pipelines import BayesOptPipeline
@@ -39,6 +41,8 @@ warnings.filterwarnings(
 warnings.filterwarnings("error", category=OptimizationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.simplefilter(action="ignore", category=RuntimeWarning)
+
+plt.rcParams.update({"font.size": 11})
 
 
 def run_simulation(
@@ -70,8 +74,14 @@ def run_simulation(
     # modules
     initialization = initializers.Sobol
     acquisition = curry(BoundedUpperConfidenceBound, center=True, beta=beta)
-    selector = VarianceSelector if conf["dimension"] > 1 else AveragingSelector
-    replicator = SequentialReplicator(horizon=2)  # MaxReplicator()
+    selector = VarianceSelector  # VarianceSelector if conf["dimension"] > 1 else AveragingSelector
+    replicator = MaxReplicator()  # SequentialReplicator(horizon=2)
+
+    # be a bit more helpful in error handling
+    try:
+        convergence_measure = ConvergenceMeasure(conf["convergence_measure"])
+    except ValueError as error:
+        raise ValueError(str(error) + f". Valid convergence measures are {ConvergenceMeasure.list()}.")
 
     # reset seed for each new simulation
     np.random.seed(44)
@@ -89,15 +99,18 @@ def run_simulation(
         n_informed_samples=conf["informed_sample_size"],
         n_random_samples=conf["random_sample_size"],
         beta=beta,
+        convergence_measure=convergence_measure,
         plot=conf["plot"],
     )
+
     print("Calculating results...", end="", flush=True)
     # allocate memory
     auc_scores = np.empty((conf["n_runs"], conf["informed_sample_size"] + conf["random_sample_size"]))
-    for j in range(conf["n_runs"]): # TODO: Set CV to true on the cluster
-        auc_scores[j, ...] = simulator.sample(x=result[j].squeeze(), noise=False, cv=False)
+
+    # calculate results using all data and cv for "more" reliability
+    for j in range(conf["n_runs"]):
+        auc_scores[j, ...] = simulator.sample(x=result[j].squeeze(), noise=False, cv=True)
     print(" done!")
-    # to_csv(auc_scores, dimension, noise_functions, regression_key, result)
     return auc_scores
 
 
@@ -112,6 +125,7 @@ def simulate_batch(
     n_informed_samples: int,
     n_random_samples: int,
     beta: float,
+    convergence_measure: ConvergenceMeasure,
     plot: bool,
 ) -> np.ndarray:
     """
@@ -130,6 +144,7 @@ def simulate_batch(
         n_informed_samples (int): The number of informed samples to take.
         n_random_samples (int): The number of random samples to take.
         beta (float): The parameter that determines the exploration vs exploitation tradeoff.
+        convergence_measure (ConvergenceMeasure): The convergence measure to use in the selector.
         plot (bool): True if the intermediate runs should be plotted.
 
     Returns:
@@ -137,6 +152,7 @@ def simulate_batch(
         batch_differences (np.ndarray): The Euclidean distance between the true optimum and the estimated optimum.
     """
     batch_results = np.zeros((n_runs, n_random_samples + n_informed_samples, simulator.dimension))
+    n_replications = 0
 
     for i in tqdm(range(n_runs), desc=f"Simulating batch for beta={beta}"):
         pipe = BayesOptPipeline(
@@ -147,25 +163,23 @@ def simulate_batch(
             replicator=replicator,
             beta=beta,
         )
-        batch_results[i, ...] = pipe.optimize(
-            source=simulator, random_sample_size=n_random_samples, informed_sample_size=n_informed_samples, plot=plot
+        batch_results[i, ...], n_replications = pipe.optimize(
+            source=simulator,
+            random_sample_size=n_random_samples,
+            informed_sample_size=n_informed_samples,
+            plot=plot,
+            convergence_measure=convergence_measure,
         )
+
+    print(f"Average number of replications made over {n_runs} runs: {n_replications/n_runs}")
 
     return batch_results
 
 
-def to_csv(auc_scores: np.ndarray, dimension: int, noise_functions: dict, regression_key: str, results: np.ndarray):
-    data = {}
-    for i, key in enumerate(noise_functions.keys()):
-        for j in range(dimension):
-            data.update({f"noise_function_{key}_parameter{j}": results[i, :, -1, j].squeeze()})
-        data.update({f"noise_function_{key}_auc": auc_scores[i, :, -1].squeeze()})
-    df = pd.DataFrame(data=data)
-    df.to_csv(path_or_buf=fr"./{regression_key}_{dimension}_parameters.csv", index=False)
-
-
 def print_conf(config: dict):
     print("Simulating BCI data")
+    print(f"\tregressor: {config['regression_key']}")
+    print(f"\tconvergence measure: {config['convergence_measure']}")
     print(f"\tdimensionality: {config['dimension']}")
     print(f"\trandom samples: {config['random_sample_size']}")
     print(f"\tinformed samples: {config['informed_sample_size']}")
@@ -179,12 +193,12 @@ if __name__ == "__main__":
     data_config = yaml.load(open("./src/conf/data_config.yaml", "r"), Loader=yaml.FullLoader)
     print_conf(config=conf)
 
-    if conf['experiment'] == "auditory_aphasia":
+    if conf["experiment"] == "auditory_aphasia":
         simulator = DataSimulator(data_config=data_config, bo_config=conf, noise_function=None,)
         paper_auc = simulator.get_paper_score()
-    elif conf['experiment'].upper() == "CVEP":
-        simulator = CVEPSimulator(data_config=data_config, bo_config=conf, trial=True,)
-        paper_auc = simulator.get_paper_score()
+    # elif conf["experiment"].upper() == "CVEP":
+    #     simulator = CVEPSimulator(data_config=data_config, bo_config=conf, trial=True,)
+    #     paper_auc = simulator.get_paper_score()
     else:
         print(f"The chosen experiment \"{conf['experiment']}\" is not supported, defaulting to \"auditory_aphasia\"")
         simulator = DataSimulator(data_config=data_config, bo_config=conf, noise_function=None,)
@@ -197,10 +211,17 @@ if __name__ == "__main__":
         "Random sampling": None,
     }
 
-    fig, axes = plt.subplots(1, 2, sharey="all")
+    fig, axes = plt.subplots(1, 2, sharey="all", figsize=(15, 8))
 
     betas = np.round(np.linspace(start=0, stop=1, num=11), decimals=1)
     boxplot_data = np.zeros((betas.shape[0], conf["n_runs"]))
+
+    # Create a results directory if it does not exist
+    destination_folder = conf["destination_folder"]
+    Path(destination_folder).mkdir(parents=True, exist_ok=True)
+
+    plot_df = pd.DataFrame([])
+    boxplot_df = pd.DataFrame([])
 
     print(f"Performing grid-search for beta in {np.linspace(0, 1, 11)}")
     for i, beta in enumerate(betas):
@@ -217,6 +238,25 @@ if __name__ == "__main__":
 
         # store boxplot data
         boxplot_data[i, :] = auc_score[:, -1]
+
+        # write the results to a csv file
+        plot_df = pd.concat([plot_df, pd.DataFrame({beta: np.mean(auc_score, axis=0)})], axis=1)
+        boxplot_df = pd.concat([boxplot_df, pd.DataFrame({beta: auc_score[:, -1]})], axis=1)
+
+    plot_df.to_csv(
+        path_or_buf=os.path.join(
+            destination_folder,
+            f"results_{conf['experiment']}_{conf['regression_key']}_{conf['convergence_measure']}_dim"
+            f"{conf['dimension']}_{conf['participant']}.csv",
+        )
+    )
+    boxplot_df.to_csv(
+        path_or_buf=os.path.join(
+            destination_folder,
+            f"results_boxplot_{conf['experiment']}_{conf['regression_key']}_{conf['convergence_measure']}_dim"
+            f"{conf['dimension']}_{conf['participant']}.csv",
+        )
+    )
 
     axes[0].plot(
         range(conf["random_sample_size"] + conf["informed_sample_size"]),
@@ -241,4 +281,10 @@ if __name__ == "__main__":
     axes[1].set_xlabel("Beta")
     axes[1].set_xticklabels(betas)
     axes[1].set_title(f"Eventual proposals by the optimization algorithm")
-    plt.show()
+    plt.savefig(
+        os.path.join(
+            destination_folder,
+            f"results_{conf['experiment']}_{conf['regression_key']}_{conf['convergence_measure']}_dim"
+            f"{conf['dimension']}_{conf['participant']}.png",
+        )
+    )
