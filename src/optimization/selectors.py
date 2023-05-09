@@ -44,6 +44,7 @@ class SimpleSelector(Selector):
         y_train: torch.Tensor,
         x_test: torch.Tensor = None,
         x_replicated: List[torch.Tensor] = None,
+        convergence_measure: Optional[Union[float, np.ndarray]] = None,
     ) -> Union[torch.tensor, float]:
         """
         Yield the most likely parameter values that optimize the black box function.
@@ -86,7 +87,12 @@ class AveragingSelector(Selector):
         )
 
     def forward(
-        self, x_train: torch.Tensor, y_train: torch.Tensor, x_test: torch.Tensor, x_replicated: List[torch.Tensor]
+        self,
+        x_train: torch.Tensor,
+        y_train: torch.Tensor,
+        x_test: torch.Tensor,
+        x_replicated: List[torch.Tensor],
+        convergence_measure: Optional[Union[float, np.ndarray]] = None,
     ) -> Union[torch.tensor, float]:
         """
         Yield the most likely parameter values that optimize the black box function.
@@ -159,9 +165,11 @@ class VarianceSelector(Selector):
         y_train: torch.Tensor,
         x_test: Optional[torch.Tensor] = None,
         x_replicated: Optional[List[torch.Tensor]] = None,
+        convergence_measure: Optional[Union[float, np.ndarray]] = None,
     ) -> Union[torch.tensor, float]:
+
         y_scaled = (1 - self.beta) * zscore(y_train.squeeze()) - self.beta * zscore(
-            torch.pow(self.estimated_variance_train.squeeze(), 2)
+            torch.pow(self.estimated_variance_train.squeeze(), 2) * convergence_measure
         )
         return x_train[torch.argmax(y_scaled)]
 
@@ -193,6 +201,7 @@ class NaiveSelector(Selector):
         y_train: torch.Tensor,
         x_test: torch.Tensor = None,
         x_replicated: List[torch.Tensor] = None,
+        convergence_measure: Optional[Union[float, np.ndarray]] = None,
     ) -> Union[torch.tensor, float]:
         """
         Yield the most likely parameter values that optimize the black box function.
