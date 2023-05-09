@@ -1,12 +1,14 @@
 # general optimization parameters
 dimension: 2
-n_runs: 5
-random_sample_size: 4
+n_runs: 15
+random_sample_size: 64
 informed_sample_size: 50
+convergence_measure: "length_scale"   # use <null> for no convergence measure.
 plot: False
+destination_folder: "./results"
 
 # data simulator parameters
-experiment: "CVEP" # "auditory_aphasia"
-participant: "sub-01" #"VPpblz_15_08_14"
+experiment: "auditory_aphasia" # "CVEP"
+participant: "VPpblz_15_08_14" # "sub-01"
 condition: "6D"
 regression_key: "Gaussian process regression"
