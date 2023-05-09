@@ -11,7 +11,8 @@ from cycler import cycler, Cycler
 from gpytorch.models.exact_gp import ExactGP
 
 from ..simulation.ObjectiveFunction import ObjectiveFunction
-from ..simulation.Simulator import Simulator
+
+# from ..simulation.Simulator import Simulator
 
 
 def setup_simulation_plot(
@@ -66,7 +67,7 @@ def setup_simulation_plot(
 
 
 def plot_objective_function(
-    domain: np.ndarray, objective_function: ObjectiveFunction, simulator: Simulator, num: int = 100
+    domain: np.ndarray, objective_function: ObjectiveFunction, simulator, num: int = 100
 ) -> None:
     """
     Visualise the objective function with a few simulated samples.
@@ -154,7 +155,6 @@ def plot_simulation_results(
     noise_functions: dict,
     objective_key: str,
     regression_key: str,
-    sample_size: int,
     colors: Cycler = matplotlib.rcParams["axes.prop_cycle"],
     lines: Cycler = cycler("linestyle", ["-", "--", ":", "-."]),
 ) -> None:
@@ -171,7 +171,6 @@ def plot_simulation_results(
         noise_functions (dict): The dictionary containing the noise functions.
         objective_key (str): The string indicating the objective function.
         regression_key (str): The string indicating the regression model.
-        sample_size (str): The number of samples if a random regressor is used.
         colors (Cycler): A color cycler.
         lines (Cycler): A linestyle cycler.
 
@@ -181,12 +180,14 @@ def plot_simulation_results(
     fig, axes = plt.subplots(1, 2)
     for dist, key, c, ls in zip(distances, noise_functions.keys(), colors, lines):
         mean = np.mean(dist, axis=0).squeeze()
-        axes[0].plot(range(sample_size), mean, color=c["color"], label=key, linestyle=ls["linestyle"])
+        axes[0].plot(
+            range(n_random_samples + n_informed_samples), mean, color=c["color"], label=key, linestyle=ls["linestyle"]
+        )
     axes[0].legend(title="Noise type")
-    axes[0].set_xlabel("Number of informed samples")
+    axes[0].set_xlabel("Number of samples")
     axes[0].set_ylabel("Euclidean distance")
     axes[0].set_title(f"Average distance between the estimated and true optimum")
-    axes[0].set_xticks(ticks=np.arange(0, sample_size, 5))
+    axes[0].set_xticks(ticks=np.arange(0, n_random_samples + n_informed_samples, 5))
     boxplot_data = [distances[i, :, -1].flatten() for i in range(len(noise_functions))]
     axes[1].boxplot(boxplot_data)
     axes[1].set_xlabel("Noise function")
