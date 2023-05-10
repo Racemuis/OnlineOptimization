@@ -1,6 +1,5 @@
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Optional, Union, Tuple, List
-from enum import Enum
 
 import numpy as np
 import torch
@@ -148,18 +147,3 @@ class Replicator(ABC):
             return mean, None
         sigma = posterior.variance.clamp_min(min_var).sqrt().view(mean.shape)
         return mean, sigma
-
-
-class ConvergenceMeasure(Enum):
-    """
-    Enumerate class for the different convergence measures.
-    """
-    LENGTH_SCALE = 'length_scale'
-    MSE = 'mse'
-    NOISE_UNCERTAINTY = 'noise_uncertainty'
-    MODEL_UNCERTAINTY = 'model_uncertainty'
-    NONE = None
-
-    @classmethod
-    def list(cls):
-        return list(map(lambda c: c.value, cls))
