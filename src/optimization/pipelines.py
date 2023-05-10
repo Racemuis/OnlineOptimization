@@ -4,7 +4,8 @@ from typing import Type, Optional, Tuple, Union, Callable
 
 from sklearn.metrics import mean_squared_error
 
-from src.utils.base import Source, RegressionModel, Initializer, Selector, Replicator, ConvergenceMeasure
+from src.utils.base import Source, RegressionModel, Initializer, Selector, Replicator
+from src.utils.enums import ConvergenceMeasure
 from src.optimization.selectors import NaiveSelector
 from src.utils.wrap_acqf import uncurry
 from src.models.gaussian_processes import MostLikelyHeteroskedasticGP
@@ -89,7 +90,11 @@ class BayesOptPipeline:
         if self.regression_model is not None:
             for i in range(informed_sample_size):
                 x_sample, y_sample = self._optimization_step(
-                    x_train=x_train, y_train=y_train, x_test=x_test, source=source
+                    x_train=x_train,
+                    y_train=y_train,
+                    x_test=x_test,
+                    source=source,
+                    convergence_measure=convergence_measure,
                 )
 
                 # Update training data
@@ -186,7 +191,12 @@ class BayesOptPipeline:
         return measure
 
     def _optimization_step(
-        self, x_train: torch.Tensor, y_train: torch.Tensor, x_test: torch.Tensor, source: Source,
+        self,
+        x_train: torch.Tensor,
+        y_train: torch.Tensor,
+        x_test: torch.Tensor,
+        source: Source,
+        convergence_measure: ConvergenceMeasure,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         A Bayesian optimization, optimization step. Use the acquisition function to select a new sample, based on the
@@ -197,6 +207,7 @@ class BayesOptPipeline:
             y_train (torch.Tensor): A `batch_shape x n x m` tensor of training observations.
             x_test (torch.Tensor): A `batch_shape x n x d` tensor of densely spaced test features.
             source (Source): A source where samples can be taken from.
+            convergence_measure (ConvergenceMeasure): The convergence measure to use in the selector.
 
         Returns:
             torch.Tensor: The x-coordinate of the sample.
@@ -223,10 +234,11 @@ class BayesOptPipeline:
         )
 
         # Store the posterior for MSE calculation
-        posterior = fitted_model.posterior(x_train).mean.cpu().detach().numpy().squeeze()
-        if self.previous_posterior is not None:
-            self.mses.append(mean_squared_error(posterior[:-1], self.previous_posterior))
-        self.previous_posterior = posterior
+        if convergence_measure == ConvergenceMeasure.MSE:
+            posterior = fitted_model.posterior(x_train).mean.cpu().detach().numpy().squeeze()
+            if self.previous_posterior is not None:
+                self.mses.append(mean_squared_error(posterior[:-1], self.previous_posterior))
+            self.previous_posterior = posterior
 
         # Store replicated samples
         if not torch.equal(x_sample, x_proposed):
@@ -234,6 +246,3 @@ class BayesOptPipeline:
 
         y_sample = torch.tensor(source.sample(x=x_sample.numpy()))
         return x_sample, torch.tensor([[y_sample.item()]])
-
-    def calculate_convergence_score(self, score_type: str):
-        pass
