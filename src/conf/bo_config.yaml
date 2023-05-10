@@ -1,14 +1,19 @@
 # general optimization parameters
 dimension: 2
-n_runs: 15
-random_sample_size: 64
-informed_sample_size: 50
-convergence_measure: "length_scale"   # use <null> for no convergence measure.
+n_runs: 3
+random_sample_size: 8
+informed_sample_size: 4
 plot: False
 destination_folder: "./results"
+
+# modules
+initializer: "sobol"
+replicator: "max"
+selector: "variance"
+regressor: "Gaussian process regression"
+convergence_measure: "noise_uncertainty"   # use <null> for no convergence measure.
 
 # data simulator parameters
 experiment: "auditory_aphasia" # "CVEP"
 participant: "VPpblz_15_08_14" # "sub-01"
 condition: "6D"
-regression_key: "Gaussian process regression"
