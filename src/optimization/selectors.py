@@ -168,8 +168,8 @@ class VarianceSelector(Selector):
         convergence_measure: Optional[Union[float, np.ndarray]] = None,
     ) -> Union[torch.tensor, float]:
 
-        y_scaled = (1 - self.beta) * zscore(y_train.squeeze()) - self.beta * zscore(
-            torch.pow(self.estimated_variance_train.squeeze(), 2) * convergence_measure
+        y_scaled = (1 - self.beta) * zscore(y_train[:-1].squeeze()) - self.beta * zscore(
+            torch.pow(self.estimated_variance_train.squeeze()[:-1], 2) * convergence_measure
         )
         return x_train[torch.argmax(y_scaled)]
 
