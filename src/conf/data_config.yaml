@@ -1,5 +1,6 @@
 auditory_aphasia:
   data_path: C:\Users\Racemuis\Documents\school\m artificial intelligence\semester 2\thesis\bci_data\auditory_aphasia
+  # data_path: /home/ddnt/chitho/auditory_aphasia
   participant_list:
     - VPpblz_15_08_14
     #- VPpboa_15_08_11
@@ -13,6 +14,10 @@ auditory_aphasia:
 CVEP:
   data_path: C:\Users\Racemuis\Documents\school\m artificial intelligence\semester 2\thesis\bci_data\CVEP
   pynt_path: C:\Users\Racemuis\Documents\school\m artificial intelligence\semester 2\thesis\bci_data\CVEP\pynt-main
+
+#  data_path: /home/ddnt/chitho/CVEP
+#  pynt_path: /home/ddnt/chitho/CVEP/pynt-main
+
   participant_list:
     - sub-01
 #    - sub-02

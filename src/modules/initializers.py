@@ -44,7 +44,7 @@ class Sobol(Initializer):
     [1] I.M Sobol, "On the distribution of points in a cube and the approximate evaluation of integrals",
     USSR Computational Mathematics and Mathematical Physics, Volume 7, Issue 4, 1967, Pages 86-112, ISSN 0041-5553,
     https://doi.org/10.1016/0041-5553(67)90144-9.
-    [2] Letham, Benjamin, et al. "Constrained Bayesian optimization with noisy experiments.", 2019, pp. 495-519.
+    [2] Letham, Benjamin, et al. "Constrained Bayesian modules with noisy experiments.", 2019, pp. 495-519.
     """
 
     def __init__(self, domain: np.ndarray):

@@ -63,7 +63,7 @@ def ackley_function(
     x: Union[float, np.ndarray], a: float = 20, b: float = 0.2, c: float = 2 * np.pi, complement: bool = True
 ) -> Union[float, np.ndarray]:
     """
-    An optimization benchmark function proposed by David Ackley [1].
+    An modules benchmark function proposed by David Ackley [1].
 
     Common input domain: x_i ∈ [-32.768, 32.768], though smaller cubes are also possible.
 
@@ -104,7 +104,7 @@ class BraninFunction(ObjectiveFunction):
         Returns the maxima of the objective function.
 
         Returns:
-            np.ndarray: The objective of the maximum. Returns 0 if the optimization was unsuccessful.
+            np.ndarray: The objective of the maximum. Returns 0 if the modules was unsuccessful.
         """
         return [np.array([-np.pi, 12.275]), np.array([np.pi, 2.275]), np.array([9.42478, 2.475])]
 
@@ -120,7 +120,7 @@ class BraninFunction(ObjectiveFunction):
         complement: bool = True,
     ) -> Union[float, np.ndarray]:
         """
-        An optimization benchmark function retrieved from https://www.sfu.ca/~ssurjano/branin.html.
+        An modules benchmark function retrieved from https://www.sfu.ca/~ssurjano/branin.html.
 
         Common input domain: The square x1 ∈ [-5, 10], x2 ∈ [0, 15].
 

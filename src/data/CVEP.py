@@ -1,5 +1,5 @@
 import os
-from typing import Union
+from typing import Union, List
 import numpy as np
 import pynt
 
@@ -40,11 +40,11 @@ class CVEPSimulator(Source):
         """
         Args:
             data_config (dict): The data configuration file.
-            bo_config (dict): The optimization configuration file, containing:
+            bo_config (dict): The modules configuration file, containing:
                 - experiment (str): The name of the experiment (matches with a key in the data_config).
                 - participant (Optional[str]): The participant to read. If None is provided, all participants are read.
                    Default = None.
-                - dimension (int): The dimensionality of the optimization problem.
+                - dimension (int): The dimensionality of the modules problem.
                    Only 0 < dimension <= 3 are supported.
             trial (bool): True if the accuracy of the trial level should be calculated.
         """
@@ -57,6 +57,7 @@ class CVEPSimulator(Source):
 
         self.reader = CVEPReader()
         self.x_train, self.y_train, self.V, self.fs, self.channels = self.reader.load_data(conf=data_config)
+        self.weights = None
 
     @property
     def dimension(self):
@@ -69,6 +70,9 @@ class CVEPSimulator(Source):
     @property
     def objective_function(self):
         return None
+
+    def clear_weights(self) -> None:
+        self.weights = None
 
     def sample(
         self, x: np.ndarray, info: bool = False, noise: bool = True, cv: bool = False
@@ -116,7 +120,8 @@ class CVEPSimulator(Source):
         else:
             raise NotImplementedError(f"The chosen dimension {self.dimension} is not supported.")
 
-        print(shrinkage, epoch_multiplier)
+        if self.weights is None:
+            self.weights = self.train_CCA(epoch_multiplier=epoch_multiplier, noise=noise, cv=cv)
 
         # Set trial duration
         n_samples = int(4.2 * self.fs)
@@ -127,13 +132,10 @@ class CVEPSimulator(Source):
 
         # Set up codebook for trial classification
         n = int(np.ceil(n_samples / self.V.shape[0]))
-        _V = np.tile(self.V, (n, 1)).astype("float32")[: n_samples - epoch_size : step_size]
+        _V = np.tile(self.V, (n, 1)).astype("float32")[: n_samples - epoch_size: step_size]
 
         # Initialize classifier with estimated shrinkage parameter
         lda = LinearDiscriminantAnalysis(solver="lsqr", shrinkage=self.get_item(shrinkage))
-
-        # Setup CCA
-        cca = CCA(n_components=1)
 
         # Simulate noise by taking random subsets of the training data
         if noise and self.noise_function is None:
@@ -165,15 +167,7 @@ class CVEPSimulator(Source):
                     X_tst, y_tst, self.V, epoch_size, step_size
                 )
 
-                # Train CCA (on epoch level)
-                erp_noflash = np.mean(X_sliced_trn[y_sliced_trn == 0, :, :], axis=0, keepdims=True)
-                erp_flash = np.mean(X_sliced_trn[y_sliced_trn == 1, :, :], axis=0, keepdims=True)
-                erps = np.concatenate((erp_noflash, erp_flash), axis=0)[y_sliced_trn, :, :]
-                cca.fit(
-                    X_sliced_trn.transpose((0, 1, 3, 2)).reshape((-1, x_sampled.shape[1])),
-                    erps.transpose((0, 1, 3, 2)).reshape(-1, x_sampled.shape[1]),
-                )
-                w = cca.x_weights_.flatten()
+                w = self.weights[i_fold]
 
                 # Apply CCA (on epoch level)
                 X_sliced_filtered_trn = np.dot(
@@ -191,25 +185,26 @@ class CVEPSimulator(Source):
                 # Apply LDA (on epoch level)
                 yh_sliced_tst = lda.predict(X_sliced_filtered_tst)
 
-                # Compute accuracy (on epoch level)
-                accuracy_epoch[i_fold] = 100 * np.mean(yh_sliced_tst == y_sliced_tst.flatten())
-
-                # Apply LDA (on trial level)
-                ph_tst = lda.predict_proba(X_sliced_filtered_tst)[:, 1]
-                ph_tst = np.reshape(ph_tst, y_sliced_tst.shape)
-                rho = pynt.utilities.correlation(ph_tst, _V.T)
-                yh_tst = np.argmax(rho, axis=1)
-                accuracy_trial[i_fold] = 100 * np.mean(yh_tst == y_tst)
+                if self.trial:
+                    # Apply LDA (on trial level)
+                    ph_tst = lda.predict_proba(X_sliced_filtered_tst)[:, 1]
+                    ph_tst = np.reshape(ph_tst, y_sliced_tst.shape)
+                    rho = pynt.utilities.correlation(ph_tst, _V.T)
+                    yh_tst = np.argmax(rho, axis=1)
+                    accuracy_trial[i_fold] = 100 * np.mean(yh_tst == y_tst)
+                else:
+                    # Compute accuracy (on epoch level)
+                    accuracy_epoch[i_fold] = 100 * np.mean(yh_sliced_tst == y_sliced_tst.flatten())
 
             if self.trial:
                 f_x = accuracy_trial.mean()
             else:
                 f_x = accuracy_epoch.mean()
+            return f_x
 
         else:
             # Evaluate classifier over a single fold
             X_trn, X_tst, y_trn, y_tst = train_test_split(x_sampled, y_sampled)
-            print(X_tst.shape)
             X_trn = X_trn[:, :, :n_samples]
             X_tst = X_tst[:, :, :n_samples]
 
@@ -221,17 +216,7 @@ class CVEPSimulator(Source):
                 X_tst, y_tst, self.V, epoch_size, step_size
             )
 
-            print(X_sliced_tst.shape)
-
-            # Train CCA (on epoch level)
-            erp_noflash = np.mean(X_sliced_trn[y_sliced_trn == 0, :, :], axis=0, keepdims=True)
-            erp_flash = np.mean(X_sliced_trn[y_sliced_trn == 1, :, :], axis=0, keepdims=True)
-            erps = np.concatenate((erp_noflash, erp_flash), axis=0)[y_sliced_trn, :, :]
-            cca.fit(
-                X_sliced_trn.transpose((0, 1, 3, 2)).reshape((-1, x_sampled.shape[1])),
-                erps.transpose((0, 1, 3, 2)).reshape(-1, x_sampled.shape[1]),
-            )
-            w = cca.x_weights_.flatten()
+            w = self.weights
 
             # Apply CCA (on epoch level)
             X_sliced_filtered_trn = np.dot(
@@ -246,25 +231,99 @@ class CVEPSimulator(Source):
             # N.B.: all epochs of all trials are concatenated
             lda.fit(X_sliced_filtered_trn, y_sliced_trn.flatten())
 
-            # Apply LDA (on epoch level)
-            yh_sliced_tst = lda.predict(X_sliced_filtered_tst)
-
-            # Compute accuracy (on epoch level)
-            accuracy_epoch = 100 * np.mean(yh_sliced_tst == y_sliced_tst.flatten())
-
-            # Apply LDA (on trial level)
-            ph_tst = lda.predict_proba(X_sliced_filtered_tst)[:, 1]
-            ph_tst = np.reshape(ph_tst, y_sliced_tst.shape)
-            rho = pynt.utilities.correlation(ph_tst, _V.T)
-            yh_tst = np.argmax(rho, axis=1)
-            accuracy_trial = 100 * np.mean(yh_tst == y_tst)
-
             if self.trial:
+                # Apply LDA (on trial level)
+                ph_tst = lda.predict_proba(X_sliced_filtered_tst)[:, 1]
+                ph_tst = np.reshape(ph_tst, y_sliced_tst.shape)
+                rho = pynt.utilities.correlation(ph_tst, _V.T)
+                yh_tst = np.argmax(rho, axis=1)
+                accuracy_trial = 100 * np.mean(yh_tst == y_tst)
                 f_x = accuracy_trial
+
             else:
+                # Apply LDA (on epoch level)
+                yh_sliced_tst = lda.predict(X_sliced_filtered_tst)
+
+                # Compute accuracy (on epoch level)
+                accuracy_epoch = 100 * np.mean(yh_sliced_tst == y_sliced_tst.flatten())
                 f_x = accuracy_epoch
 
         return f_x
+
+    def train_CCA(self, epoch_multiplier: float, noise: bool, cv: bool) -> Union[List[np.ndarray], np.ndarray]:
+        # Set trial duration
+        n_samples = int(4.2 * self.fs)
+
+        # Set epoch size
+        epoch_size = int(np.ceil(epoch_multiplier * self.fs))
+        step_size = int(1 / 60 * self.fs)
+
+        # Set up codebook for trial classification
+        n = int(np.ceil(n_samples / self.V.shape[0]))
+        _V = np.tile(self.V, (n, 1)).astype("float32")[: n_samples - epoch_size: step_size]
+
+        # Setup CCA
+        cca = CCA(n_components=1)
+
+        # Simulate noise by taking random subsets of the training data
+        if noise and self.noise_function is None:
+            x_sampled, _, y_sampled, _ = train_test_split(
+                self.x_train, self.y_train, train_size=int(np.floor(3 * self.x_train.shape[0] / 4))
+            )
+        else:
+            x_sampled = self.x_train
+            y_sampled = self.y_train
+
+        if cv:
+            # Setup cross-validation
+            n_folds = 5
+            folds = np.repeat(np.arange(n_folds), x_sampled.shape[0] / n_folds)
+
+            weights = []
+
+            # Loop folds
+            for i_fold in range(n_folds):
+                # Split data to train and valid set
+                X_trn, y_trn = x_sampled[folds != i_fold, :, :n_samples], y_sampled[folds != i_fold]
+
+                # Slice trials to epochs
+                X_sliced_trn, y_sliced_trn = pynt.utilities.trials_to_epochs(
+                    X_trn, y_trn, self.V, epoch_size, step_size
+                )
+
+                # Train CCA (on epoch level)
+                erp_noflash = np.mean(X_sliced_trn[y_sliced_trn == 0, :, :], axis=0, keepdims=True)
+                erp_flash = np.mean(X_sliced_trn[y_sliced_trn == 1, :, :], axis=0, keepdims=True)
+                erps = np.concatenate((erp_noflash, erp_flash), axis=0)[y_sliced_trn, :, :]
+                cca.fit(
+                    X_sliced_trn.transpose((0, 1, 3, 2)).reshape((-1, x_sampled.shape[1])),
+                    erps.transpose((0, 1, 3, 2)).reshape(-1, x_sampled.shape[1]),
+                )
+                w = cca.x_weights_.flatten()
+
+                weights.append(w)
+            return weights
+
+        else:
+            # Evaluate classifier over a single fold
+            X_trn, X_tst, y_trn, y_tst = train_test_split(x_sampled, y_sampled)
+            X_trn = X_trn[:, :, :n_samples]
+
+            # Slice trials to epochs
+            X_sliced_trn, y_sliced_trn = pynt.utilities.trials_to_epochs(
+                X_trn, y_trn, self.V, epoch_size, step_size
+            )
+
+            # Train CCA (on epoch level)
+            erp_noflash = np.mean(X_sliced_trn[y_sliced_trn == 0, :, :], axis=0, keepdims=True)
+            erp_flash = np.mean(X_sliced_trn[y_sliced_trn == 1, :, :], axis=0, keepdims=True)
+            erps = np.concatenate((erp_noflash, erp_flash), axis=0)[y_sliced_trn, :, :]
+            cca.fit(
+                X_sliced_trn.transpose((0, 1, 3, 2)).reshape((-1, x_sampled.shape[1])),
+                erps.transpose((0, 1, 3, 2)).reshape(-1, x_sampled.shape[1]),
+            )
+            w = cca.x_weights_.flatten()
+            return w
 
     def get_paper_score(self):
         # Set trial duration
@@ -357,7 +416,7 @@ class CVEPSimulator(Source):
         Returns:
             np.ndarray: The domain of the simulated objective function.
         """
-        domains = np.array([[0, 1], [0.1, 0.4],])  # shrinkage  # number of CCA components
+        domains = np.array([[0, 1], [0.1, 0.4], ])  # shrinkage  # number of CCA components
         return domains[: self.dimension].transpose()
 
     @staticmethod

@@ -35,7 +35,7 @@ class ObjectiveFunction:
         Calculate the maximum of the objective function.
 
         Returns:
-            float: The objective of the maximum. Returns 0 if the optimization was unsuccessful.
+            float: The objective of the maximum. Returns 0 if the modules was unsuccessful.
         """
         bounds = scipy.optimize.Bounds(lb=self.domain[0], ub=self.domain[1])
         naive_guess = self.domain[1] - self.domain[0]

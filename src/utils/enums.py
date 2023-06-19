@@ -1,6 +1,6 @@
 from enum import Enum
-from src import optimization
-from src.models import trees, gaussian_processes
+from src import modules
+from src.modules.models import gaussian_processes, trees
 
 
 class ExtendedEnum(Enum):
@@ -17,18 +17,20 @@ class ConvergenceMeasure(ExtendedEnum):
     MSE = 'mse'
     NOISE_UNCERTAINTY = 'noise_uncertainty'
     MODEL_UNCERTAINTY = 'model_uncertainty'
-    NONE = None
+    NOISE_R = 'noise_r'
+    NONE = "None"
 
 
 initializers = {
-    "random": optimization.initializers.Random,
-    "sobol": optimization.initializers.Sobol,
+    "random": modules.initializers.Random,
+    "sobol": modules.initializers.Sobol,
 }
 
     
 replicators = {
-    "max": optimization.replicators.MaxReplicator(),
-    "sequential": optimization.replicators.SequentialReplicator(horizon=2)
+    "fixed_n": modules.replicators.FixedNReplicator(n_replications=5),
+    "max": modules.replicators.MaxReplicator(),
+    "sequential": modules.replicators.SequentialReplicator(horizon=2)
 }
 
 
@@ -40,8 +42,7 @@ regression_models = {
 
 
 selectors = {
-    "variance": optimization.selectors.VarianceSelector,
-    "posterior": optimization.selectors.AveragingSelector,
+    "variance": modules.selectors.VarianceSelector,
 }
 
 

@@ -27,33 +27,36 @@ class DataSimulator(Source):
         data_config: dict,
         bo_config: dict,
         noise_function: Optional[Callable[[np.ndarray], np.ndarray]],
+        augmentation: Optional[Callable] = None,
         n_intervals: int = 5,
     ):
         """
 
         Args:
             data_config (dict): The data configuration file.
-            bo_config (dict): The optimization configuration file, containing:
+            bo_config (dict): The modules configuration file, containing:
                 - experiment (str): The name of the experiment (matches with a key in the data_config).
                 - participant (Optional[str]): The participant to read. If None is provided, all participants are read.
                     Default = None.
                 - condition (Optional[str]): The condition to read. If None is provided, all conditions are read.
                     Default = None.
-                - dimension (int): The dimensionality of the optimization problem.
+                - dimension (int): The dimensionality of the modules problem.
                     Only 0 < dimension <= 3 are supported.
             noise_function (Callable[[np.ndarray], np.ndarray]): The noise function describing the scale of the Gaussian
              distribution that is superimposed on the simulated data.
             n_intervals (int): The number of temporal intervals that should be averaged over within the epoch.
         """
-        assert bo_config['dimension'] <= 3 or bo_config['dimension'] == 7, \
-            "Only the dimensionalities of 1, 2 and 3 are supported."
+        assert (
+            bo_config["dimension"] <= 3 or bo_config["dimension"] == 7
+        ), "Only the dimensionalities of 1, 2 and 3 are supported."
         super().__init__()
         self.data_config = data_config
-        self.experiment = bo_config['experiment']
-        self.participant = bo_config['participant']
-        self.condition = bo_config['condition']
+        self.augmentation = augmentation
+        self.experiment = bo_config["experiment"]
+        self.participant = bo_config["participant"]
+        self.condition = bo_config["condition"]
         self._noise_function = noise_function
-        self._dimension = bo_config['dimension']
+        self._dimension = bo_config["dimension"]
         self.n_intervals = n_intervals
 
         self.reader = Reader(self.experiment)
@@ -76,7 +79,11 @@ class DataSimulator(Source):
         return None
 
     def sample(
-        self, x: np.ndarray, info: bool = False, noise: bool = True, cv: bool = False
+        self,
+        x: np.ndarray,
+        info: bool = False,
+        noise: bool = True,
+        cv: bool = False,
     ) -> Union[float, np.ndarray]:
         """
         Sample the objective function for the value 'x'.
@@ -159,11 +166,17 @@ class DataSimulator(Source):
             f_x = roc_auc_score(y_test, lda.predict_proba(x_test)[:, 1])
 
         # if self.noise_function is not None:
-        #     noise_scale = self.noise_function(shrinkage)
+        #     noise_scale = 0.5 * np.abs(np.sin(10 * shrinkage))  #  self.noise_function(shrinkage)
         #     if noise and noise_scale > 0.0:
         #         y_x = max(0, min(1, np.random.normal(loc=f_x, scale=noise_scale)))
         #         return y_x
-        return f_x
+
+        if self.augmentation is not None:
+            augmentation = self.augmentation(x[0]) if hasattr(x, "__len__") else self.augmentation(x)
+            if hasattr(augmentation, "__len__") and len(augmentation) > 1:
+                augmentation = augmentation[0]
+            f_x = np.minimum((f_x + augmentation), np.ones(f_x.squeeze().shape))
+        return f_x.squeeze()
 
     def get_paper_score(self):
         """
@@ -200,11 +213,11 @@ class DataSimulator(Source):
             [
                 [0, 1],  # shrinkage
                 [0, 0.1],  # temporal averaging start
-                [0.03, 0.4 / self.n_intervals],  # temporal averaging interval
-                [0.03, 0.4 / self.n_intervals],  # temporal averaging interval
-                [0.03, 0.4 / self.n_intervals],  # temporal averaging interval
-                [0.03, 0.4 / self.n_intervals],  # temporal averaging interval
-                [0.03, 0.4 / self.n_intervals],  # temporal averaging interval
+                [0.03, 0.7 / self.n_intervals],  # temporal averaging interval
+                [0.03, 0.7 / self.n_intervals],  # temporal averaging interval
+                [0.03, 0.7 / self.n_intervals],  # temporal averaging interval
+                [0.03, 0.7 / self.n_intervals],  # temporal averaging interval
+                [0.03, 0.7 / self.n_intervals],  # temporal averaging interval
                 [1, 25],  # decimation
                 [-0.2, 0],  # baseline correction (lower bound)
                 [-0.1, 0.1],  # baseline correction (upper bound)

@@ -7,7 +7,7 @@ import numpy as np
 from scipy.spatial.distance import euclidean
 from botorch.models.gpytorch import BatchedMultiOutputGPyTorchModel
 
-from ..models.gaussian_processes import MostLikelyHeteroskedasticGP
+from src.modules.models.gaussian_processes import MostLikelyHeteroskedasticGP
 from ..utils.base import Replicator, RegressionModel
 from ..utils.integrate_mat_52 import p1, p3, p4
 
@@ -622,7 +622,7 @@ class MaxReplicator(Replicator):
             x_proposed (torch.Tensor): The proposed parameters.
             x_train (torch.Tensor): The parameters that have already been evaluated.
             y_train (torch.Tensor): The y-values that are associated with the evaluated parameters.
-            model (BatchedMultiOutputGPyTorchModel): The regression model that is used during the optimization process.
+            model (BatchedMultiOutputGPyTorchModel): The regression model that is used during the modules process.
 
         Returns:
             The x-value that is decided upon by the replicator. Either the proposed value, or a replication.

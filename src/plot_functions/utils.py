@@ -1,4 +1,4 @@
-from typing import Callable, Tuple
+from typing import Callable, Tuple, Optional
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -147,6 +147,66 @@ def plot_GP(
     return ax
 
 
+def plot_GP_1d(
+    x: np.ndarray,
+    y: np.ndarray,
+    x_test: np.ndarray,
+    posterior_mean: np.ndarray,
+    posterior_std: np.ndarray,
+    title: str,
+    xlabel: str,
+    ylabel: str,
+    path: Optional[str] = None,
+    r_x: Optional[np.ndarray] = None,
+    ax: Optional[plt.Axes] = None,
+) -> plt.Axes:
+    """
+    Plot posterior distribution of a 1-dimensional Gaussian Process.
+
+    Args:
+        x (np.ndarray): The x-coordinates of the observed datapoints.
+        y (np.ndarray): The y-coordinates of the observed datapoints.
+        posterior_mean: The mean of the GP posterior.
+        posterior_std: The standard deviation of the GP posterior.
+        x_test (np.ndarray): The x-coordinates corresponding to the posterior mean and std (and r(x)).
+        title (str): The title of the figure.
+        xlabel (str): The x label.
+        ylabel (str): The y label.
+        path (Optional[str]): The destination path if the plot needs to be saved. If None, the plot is not saved.
+        r_x (Optional[np.ndarray]): The estimated variance of the objective function.
+                                    If None, it is not included in the figure.
+        ax: (plt.Axes): The axis whereon the plot should be created. If None, a new axis is created.
+
+    Returns:
+        plt.Axes: The plotted ax.
+    """
+    if ax is None:
+        fig, ax = plt.subplots()
+    ax.scatter(x, y, c="tab:orange", label="Observed data", zorder=10)
+    ax.plot(x_test, posterior_mean, label=r"m(x)", zorder=20)
+    ax.fill_between(
+        x_test,
+        posterior_mean - 1.96 * posterior_std,
+        posterior_mean + 1.96 * posterior_std,
+        alpha=0.2,
+        label=r"95% confidence interval",
+        zorder=2,
+    )
+
+    if r_x is not None:
+        ax.fill_between(
+            x_test, posterior_mean - r_x, posterior_mean + r_x, alpha=0.6, color="gray", label=r"$r(x)$", zorder=0,
+        )
+    ax.set_ylabel(ylabel)
+    ax.set_xlabel(xlabel)
+    ax.set_title(title)
+    plt.legend()
+
+    if path is not None:
+        plt.savefig(path, bbox_inches="tight")
+    return ax
+
+
 def plot_simulation_results(
     distances: np.ndarray,
     n_informed_samples: int,
@@ -160,7 +220,7 @@ def plot_simulation_results(
 ) -> None:
     """
     Visualise the result of the simulations by plotting the distances to the optimum against the number of samples taken
-    by the optimization algorithm. Create a boxplot to show the distribution of the final outcome of the optimization
+    by the modules algorithm. Create a boxplot to show the distribution of the final outcome of the modules
     algorithm.
 
     Args:
@@ -193,7 +253,7 @@ def plot_simulation_results(
     axes[1].set_xlabel("Noise function")
     axes[1].set_ylabel("Euclidean distance")
     axes[1].set_xticklabels(noise_functions.keys())
-    axes[1].set_title(f"Eventual proposals by the optimization algorithm")
+    axes[1].set_title(f"Eventual proposals by the modules algorithm")
     fig.suptitle(
         f"{objective_key} - {regression_key}\nrandom samples: {n_random_samples}, "
         f"informed samples: {n_informed_samples}"

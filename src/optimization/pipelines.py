@@ -140,8 +140,8 @@ class BayesOptPipeline:
                 x_train=x_train,
                 y_train=y_train,
                 var_true=source.noise_function,
-                maximum=0,  # source.objective_function.get_maximum(),
-                f=None,  # source.objective_function.f,
+                maximum=0,
+                f=None,
                 domain=source.get_domain(),
                 acquisition_function=uncurry(
                     curried_acquisition=self.acquisition, model=self.regression_model, x_train=x_train
@@ -161,6 +161,61 @@ class BayesOptPipeline:
                 x_train=x_train[: i + 1, ...], y_train=y_train[: i + 1, ...]
             )
         return intermediate_results, len(self.replicated_samples)
+
+    def _optimization_step(
+        self,
+        x_train: torch.Tensor,
+        y_train: torch.Tensor,
+        source: Source,
+        convergence_measure: ConvergenceMeasure,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        A Bayesian modules, modules step. Use the acquisition function to select a new sample, based on the
+        fitted regression model.
+
+        Args:
+            x_train (torch.Tensor): A `batch_shape x n x d` tensor of training features.
+            y_train (torch.Tensor): A `batch_shape x n x m` tensor of training observations.
+            source (Source): A source where samples can be taken from.
+            convergence_measure (ConvergenceMeasure): The convergence measure to use in the selector.
+
+        Returns:
+            torch.Tensor: The x-coordinate of the sample.
+            torch.Tensor: The y-coordinate of the sample.
+        """
+        # Fit surrogate model and update acquisition function
+        fitted_model = self.regression_model.fit(x_train, y_train)
+        acq_function = uncurry(curried_acquisition=self.acquisition, model=self.regression_model, x_train=x_train)
+
+        # Get a new candidate
+        bounds = torch.from_numpy(source.get_domain())
+        options = {"with_grad": False} if not self.regression_model.with_grad else None
+        x_proposed, acq_value = optimize_acqf(
+            acq_function=acq_function, bounds=bounds, q=1, num_restarts=5, raw_samples=20, options=options
+        )
+
+        # Calculate possible replication
+        x_sample = self.replicator.forward(
+            x_proposed=x_proposed,
+            x_train=x_train,
+            y_train=y_train,
+            model=self.regression_model,
+        )
+
+        # Store the posterior for MSE calculation
+        if convergence_measure == ConvergenceMeasure.MSE:
+            posterior = fitted_model.posterior(x_train).mean.detach().numpy().squeeze()
+            if self.previous_posterior is not None:
+                self.mses.append(mean_squared_error(posterior[:-1], self.previous_posterior))
+            self.previous_posterior = posterior
+
+        # Store replicated samples
+        if not torch.equal(x_sample, x_proposed):
+            self.replicated_samples.append(x_sample)
+
+        y_sample = torch.tensor(source.sample(x=x_sample.numpy()))
+
+        return x_sample, torch.tensor(y_sample[:, np.newaxis])
 
     def plot_r_x_family(self, x_test):
         color = cm.Reds(np.linspace(0, 1, len(self.variance_function_family)))
@@ -232,57 +287,3 @@ class BayesOptPipeline:
 
         return measure
 
-    def _optimization_step(
-        self,
-        x_train: torch.Tensor,
-        y_train: torch.Tensor,
-        source: Source,
-        convergence_measure: ConvergenceMeasure,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        A Bayesian modules, modules step. Use the acquisition function to select a new sample, based on the
-        fitted regression model.
-
-        Args:
-            x_train (torch.Tensor): A `batch_shape x n x d` tensor of training features.
-            y_train (torch.Tensor): A `batch_shape x n x m` tensor of training observations.
-            source (Source): A source where samples can be taken from.
-            convergence_measure (ConvergenceMeasure): The convergence measure to use in the selector.
-
-        Returns:
-            torch.Tensor: The x-coordinate of the sample.
-            torch.Tensor: The y-coordinate of the sample.
-        """
-        # Fit surrogate model and update acquisition function
-        fitted_model = self.regression_model.fit(x_train, y_train)
-        acq_function = uncurry(curried_acquisition=self.acquisition, model=self.regression_model, x_train=x_train)
-
-        # Get a new candidate
-        bounds = torch.from_numpy(source.get_domain())
-        options = {"with_grad": False} if not self.regression_model.with_grad else None
-        x_proposed, acq_value = optimize_acqf(
-            acq_function=acq_function, bounds=bounds, q=1, num_restarts=5, raw_samples=20, options=options
-        )
-
-        # Calculate possible replication
-        x_sample = self.replicator.forward(
-            x_proposed=x_proposed,
-            x_train=x_train,
-            y_train=y_train,
-            model=self.regression_model,
-        )
-
-        # Store the posterior for MSE calculation
-        if convergence_measure == ConvergenceMeasure.MSE:
-            posterior = fitted_model.posterior(x_train).mean.detach().numpy().squeeze()
-            if self.previous_posterior is not None:
-                self.mses.append(mean_squared_error(posterior[:-1], self.previous_posterior))
-            self.previous_posterior = posterior
-
-        # Store replicated samples
-        if not torch.equal(x_sample, x_proposed):
-            self.replicated_samples.append(x_sample)
-
-        y_sample = torch.tensor(source.sample(x=x_sample.numpy()))
-
-        return x_sample, torch.tensor(y_sample[:, np.newaxis])

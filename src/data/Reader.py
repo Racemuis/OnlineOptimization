@@ -118,6 +118,8 @@ class Reader:
             reject=reject,
             proj=False,
             preload=True,
+            tmin=-0.2,
+            tmax=0.8  # TODO: added tmin and tmax, check whether that's correct
         )
 
     def eeg_to_numpy(

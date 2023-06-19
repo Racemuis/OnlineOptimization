@@ -1,6 +1,7 @@
 from typing import Callable, Type, Optional, Union
 
 from torch import Tensor
+from .base import RegressionModel
 from botorch.models.model import Model
 from botorch.acquisition import AcquisitionFunction
 
@@ -26,7 +27,8 @@ def curry(
 
     def init_acquisition_function(model: Model, x_train: Optional[Tensor] = None) -> AcquisitionFunction:
         if x_train is not None:  # For acquisition functions such as NEI that take the data as input.
-            acquisition = acquisition_function(model, X_observed=x_train)
+            # acquisition = acquisition_function(model, **kwargs)
+            acquisition = acquisition_function(model, X_observed=x_train,)
         else:  # For acquisition functions such as UCB, that just take args that are known beforehand.
             acquisition = acquisition_function(model, **kwargs)
         return acquisition
@@ -36,7 +38,7 @@ def curry(
 
 def uncurry(
     curried_acquisition: Union[Callable[[Model], AcquisitionFunction], Callable[[Tensor, Model], AcquisitionFunction]],
-    model: Model,
+    model: RegressionModel,
     x_train: Tensor,
 ):
     """

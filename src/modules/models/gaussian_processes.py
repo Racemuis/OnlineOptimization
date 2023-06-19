@@ -9,8 +9,8 @@ import matplotlib.pyplot as plt
 from botorch.exceptions import OptimizationWarning
 from botorch.acquisition.objective import PosteriorTransform
 
-from ..plot_functions.utils import plot_GP
-from ..utils.base import RegressionModel
+from src.plot_functions.utils import plot_GP
+from src.utils.base import RegressionModel
 
 from botorch.models import transforms
 from botorch.acquisition import AcquisitionFunction
@@ -279,7 +279,7 @@ class MostLikelyHeteroskedasticGP(RegressionModel):
             output_indices: A list of indices, corresponding to the outputs over
                 which to compute the posterior (if the model is multi-output).
                 Can be used to speed up computation if only a subset of the
-                model's outputs are required for optimization. If omitted,
+                model's outputs are required for modules. If omitted,
                 computes the posterior over all model outputs.
             observation_noise: If True, add observation noise to the posterior.
             posterior_transform: An optional PosteriorTransform.
@@ -445,5 +445,5 @@ class MostLikelyHeteroskedasticGP(RegressionModel):
         ax2.legend(bbox_to_anchor=(1.01, 0.0), loc="lower left", ncols=1, borderaxespad=0.0)
         plt.tight_layout()
         plt.show()
-        fig1.savefig("./optimization.pdf", bbox_inches='tight')
+        fig1.savefig("./modules.pdf", bbox_inches='tight')
 

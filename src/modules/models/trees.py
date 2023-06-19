@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from ..utils.base import RegressionModel
+from src.utils.base import RegressionModel
 
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.ensemble._base import _partition_estimators
@@ -184,7 +184,7 @@ class RandomForestWrapper(RandomForestRegressor, Model, RegressionModel):
         output_indices: A list of indices, corresponding to the outputs over
             which to compute the posterior (if the model is multi-output).
             Can be used to speed up computation if only a subset of the
-            model's outputs are required for optimization. If omitted,
+            model's outputs are required for modules. If omitted,
             computes the posterior over all model outputs.
         observation_noise: If True, add observation noise to the posterior.
         posterior_transform: An optional PosteriorTransform.

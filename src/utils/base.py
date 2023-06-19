@@ -5,6 +5,7 @@ import numpy as np
 import torch
 
 from botorch.acquisition import AcquisitionFunction
+from botorch.models.model import Model
 from botorch.models.gpytorch import BatchedMultiOutputGPyTorchModel
 
 
@@ -48,6 +49,10 @@ class RegressionModel(ABC):
     def get_estimated_std(self, x_train: torch.Tensor) -> torch.Tensor:
         ...
 
+    @abstractmethod
+    def get_posterior_std(self, x_train: torch.Tensor) -> torch.Tensor:
+        ...
+
     @property
     @abstractmethod
     def with_grad(self) -> bool:
@@ -66,6 +71,8 @@ class RegressionModel(ABC):
         maximum: float,
         f: Callable,
         domain: np.ndarray,
+        random_sample_size: int,
+        informed_sample_size: int,
         acquisition_function: Optional[AcquisitionFunction],
     ):
         ...
@@ -87,20 +94,17 @@ class Selector(ABC):
         beta: float,
         model: Optional[BatchedMultiOutputGPyTorchModel],
         estimated_variance_train: Optional[torch.Tensor],
-        estimated_variance_test: Optional[torch.Tensor],
     ):
         assert 0 <= beta <= 1, f"beta should on the domain [0, 1], received: {beta}"
         self.beta = beta
         self.model = model
         self.estimated_variance_train = estimated_variance_train
-        self.estimated_variance_test = estimated_variance_test
 
     @abstractmethod
     def forward(
         self,
         x_train: torch.Tensor,
         y_train: torch.Tensor,
-        x_test: Optional[torch.Tensor],
         x_replicated: Optional[List[torch.Tensor]],
         convergence_measure: Optional[Union[float, np.ndarray]],
     ) -> Union[torch.tensor, float]:
@@ -118,7 +122,6 @@ class Replicator(ABC):
         x_train: torch.Tensor,
         y_train: torch.Tensor,
         model: RegressionModel,
-        estimated_std: torch.Tensor,
     ):
         ...
 

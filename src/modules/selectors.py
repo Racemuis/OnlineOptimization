@@ -11,7 +11,7 @@ from botorch.models.gpytorch import BatchedMultiOutputGPyTorchModel
 class SimpleSelector(Selector):
     """
     Simple implementation of a selector that decides what sample to choose as the final output of the Bayesian
-    optimization process. The simple selection is based on the sampled y_coordinate and the variance that is
+    modules process. The simple selection is based on the sampled y_coordinate and the variance that is
     estimated by the model.
     """
 

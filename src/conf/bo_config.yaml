@@ -1,19 +1,20 @@
-# general optimization parameters
-dimension: 2
-n_runs: 3
-random_sample_size: 8
-informed_sample_size: 4
+# general modules parameters
+dimension: 3
+n_runs: 10
+random_sample_size: 64
+informed_sample_size: 20
 plot: False
-destination_folder: "./results"
+destination_folder: "./optimization_beta"
 
 # modules
+acquisition: "ucb" # "var"
 initializer: "sobol"
-replicator: "max"
+replicator: "fixed_n" #"max", "sequential"
 selector: "variance"
-regressor: "Gaussian process regression"
-convergence_measure: "noise_uncertainty"   # use <null> for no convergence measure.
+regressor: "Gaussian process regression" # "Gaussian process regression"
+convergence_measure: "None"   # use <None> for no convergence measure.
 
 # data simulator parameters
-experiment: "auditory_aphasia" # "CVEP"
-participant: "VPpblz_15_08_14" # "sub-01"
+experiment: "auditory_aphasia"
+participant: "VPpblz_15_08_14" # ["VPpblz_15_08_14", "VPpboa_15_08_11", "VPpbob_15_08_13", "VPpboc_15_08_17"]
 condition: "6D"
