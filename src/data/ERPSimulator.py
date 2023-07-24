@@ -153,7 +153,7 @@ class DataSimulator(Source):
         lda = LinearDiscriminantAnalysis(solver="lsqr", shrinkage=self.get_item(shrinkage))
 
         # Simulate noise by taking random subsets of the training data
-        if noise and not self.noise_function:
+        if noise and not self._noise_function:
             x_sampled, _, y_sampled, _ = train_test_split(x_train, y_train, train_size=450)
             x_train = x_sampled
             y_train = y_sampled
@@ -176,10 +176,10 @@ class DataSimulator(Source):
             augmentation = np.sin(x_scaled)
 
             # Add the augmentation
-            f_x = np.minimum((f_x + augmentation), np.ones(f_x.squeeze().shape))
+            f_x = f_x + augmentation
 
         # Add artificial noise
-        if noise and self.noise_function:
+        if noise and self._noise_function:
             # Scale the shrinkage parameter (defined on the domain [0, 1]) to the domain [0, 2π]
             x_scaled = shrinkage * 2 * np.pi
 
@@ -187,7 +187,7 @@ class DataSimulator(Source):
             y_x = max(0, min(1, np.random.normal(loc=f_x, scale=noise_scale)))
             return y_x
 
-        return f_x.squeeze()
+        return f_x.squeeze().astype(np.float64)
 
     def get_paper_score(self):
         """

@@ -107,7 +107,7 @@ class Reader:
 
     def to_epoch(self, data, stimulus_ids: dict, class_ids: dict, reject=None) -> mne.Epochs:
         if reject is None:
-            reject = dict()  # reject = dict(eeg=60 * 1e-6)
+            reject = dict()
 
         return mne.Epochs(
             raw=data,
@@ -119,7 +119,7 @@ class Reader:
             proj=False,
             preload=True,
             tmin=-0.2,
-            tmax=0.8  # TODO: added tmin and tmax, check whether that's correct
+            tmax=0.8,
         )
 
     def eeg_to_numpy(
@@ -214,7 +214,10 @@ class Reader:
             dict: the stimulus identifiers.
             dict: the class identifiers.
         """
-        if "auditory_aphasia" in config[self.experiment]["data_path"]:
+        if (
+            "auditory_aphasia" in config[self.experiment]["data_path"]
+            or "Word_ERPs_DirectionStudyDenzer" in config[self.experiment]["data_path"]
+        ):
             stimulus_ids = dict([(f"Stimulus/S1{i}{j}", i) for j in range(7) for i in range(2)])
             class_ids = {"Target": 1, "Non-target": 0}
             return stimulus_ids, class_ids

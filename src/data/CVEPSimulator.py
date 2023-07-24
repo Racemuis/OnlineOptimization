@@ -1,3 +1,5 @@
+# The code in this file is largely based on the work on pynt by dr. Jordy Thielen.
+
 import os
 from typing import Union, List
 import numpy as np
