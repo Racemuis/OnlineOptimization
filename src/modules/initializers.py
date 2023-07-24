@@ -55,7 +55,7 @@ class Sobol(Initializer):
             domain (np.ndarray): The domain where to sample from.
         """
         super().__init__(domain=domain)
-        self.sampler = qmc.Sobol(d=self.dimension, scramble=True, seed=42)
+        self.sampler = qmc.Sobol(d=self.dimension, scramble=True, seed=np.random.randint(0, 100))
 
     def forward(self, n_samples: int) -> torch.Tensor:
         """
@@ -70,7 +70,10 @@ class Sobol(Initializer):
             Tensor: A tensor of the `self.size` random samples, wrapped in the shape n_batches x n_samples x n_dims
         """
         if self.is_power_of_two(n_samples):
-            unit_sample = self.sampler.random_base2(m=int(np.log2(n_samples)))
+            try:
+                unit_sample = self.sampler.random_base2(m=int(np.log2(n_samples)))
+            except ValueError:
+                unit_sample = self.sampler.random(n=int(n_samples))
         else:
             unit_sample = self.sampler.random(n=int(n_samples))
 

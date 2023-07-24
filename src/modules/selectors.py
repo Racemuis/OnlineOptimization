@@ -16,10 +16,7 @@ class SimpleSelector(Selector):
     """
 
     def __init__(
-        self,
-        beta: float,
-        model: BatchedMultiOutputGPyTorchModel,
-        estimated_variance_train: torch.Tensor,
+        self, beta: float, model: BatchedMultiOutputGPyTorchModel, estimated_variance_train: torch.Tensor,
     ):
         """
         Args:
@@ -27,15 +24,14 @@ class SimpleSelector(Selector):
             estimated_variance_train (Tensor): The variance that is estimated by the model over the evaluated samples.
         """
         super().__init__(
-            beta=beta,
-            model=model,
-            estimated_variance_train=estimated_variance_train,
+            beta=beta, model=model, estimated_variance_train=estimated_variance_train,
         )
 
     def forward(
         self,
         x_train: torch.Tensor,
         y_train: torch.Tensor,
+        y_posterior: Optional[torch.Tensor] = None,
         x_replicated: List[torch.Tensor] = None,
         convergence_measure: Optional[Union[float, np.ndarray]] = None,
     ) -> Union[torch.tensor, float]:
@@ -45,6 +41,7 @@ class SimpleSelector(Selector):
         Args:
             x_train (torch.Tensor): A `batch_shape x n x d` tensor of training features.
             y_train (torch.Tensor): A `batch_shape x n x m` tensor of training observations.
+            y_posterior (torch.Tensor): A `batch_shape x n x m` tensor of training observations.
             x_replicated (List[torch.Tensor]): The replicated samples.
             convergence_measure (ConvergenceMeasure): The convergence measure to use in the selector.
 
@@ -60,21 +57,17 @@ class SimpleSelector(Selector):
 
 class VarianceSelector(Selector):
     def __init__(
-        self,
-        beta: float,
-        model: BatchedMultiOutputGPyTorchModel = None,
-        estimated_variance_train: torch.Tensor = None,
+        self, beta: float, model: BatchedMultiOutputGPyTorchModel = None, estimated_variance_train: torch.Tensor = None,
     ):
         super().__init__(
-            beta=beta,
-            model=model,
-            estimated_variance_train=estimated_variance_train,
+            beta=beta, model=model, estimated_variance_train=estimated_variance_train,
         )
 
     def forward(
         self,
         x_train: torch.Tensor,
         y_train: torch.Tensor,
+        y_posterior: Optional[torch.Tensor] = None,
         x_replicated: Optional[List[torch.Tensor]] = None,
         convergence_measure: Optional[Union[float, np.ndarray]] = None,
     ) -> Union[torch.tensor, float]:
@@ -84,6 +77,7 @@ class VarianceSelector(Selector):
         Args:
             x_train (torch.Tensor): A `batch_shape x n x d` tensor of training features.
             y_train (torch.Tensor): A `batch_shape x n x m` tensor of training observations.
+            y_posterior (torch.Tensor): A `batch_shape x n x m` tensor of training observations.
             x_replicated (List[torch.Tensor]): The replicated samples.
             convergence_measure (ConvergenceMeasure): The convergence measure to use in the selector.
 
@@ -91,19 +85,23 @@ class VarianceSelector(Selector):
         Returns:
             Union[torch.tensor, float]: The most likely parameter values that optimize the black box function.
         """
+        # Beliefs that come from the observed outcomes of the objective function
+        observed_beliefs = (1 - self.beta) * zscore(y_train[:-1].squeeze())
 
-        y_scaled = (1 - self.beta) * zscore(y_train[:-1].squeeze()) - self.beta * zscore(
-            self.estimated_variance_train.squeeze()[:-1] * convergence_measure
+        # Beliefs that are modelled by the surrogate model
+        modelled_beliefs = (1 - self.beta) * zscore(y_posterior.squeeze()[:-1]) - self.beta * zscore(
+            self.estimated_variance_train.squeeze()[:-1]
         )
+
+        # Combine beliefs (if convergence_measure == 1, then the observation beliefs are not used)
+        y_scaled = (1 - convergence_measure) * observed_beliefs + convergence_measure * modelled_beliefs
+
         return x_train[torch.argmax(y_scaled)]
 
 
 class NaiveSelector(Selector):
     def __init__(
-        self,
-        beta: float,
-        model: BatchedMultiOutputGPyTorchModel = None,
-        estimated_variance_train: torch.Tensor = None,
+        self, beta: float, model: BatchedMultiOutputGPyTorchModel = None, estimated_variance_train: torch.Tensor = None,
     ):
         """
         Args:
@@ -111,15 +109,14 @@ class NaiveSelector(Selector):
             estimated_variance_train (Tensor): The variance that is estimated by the model over the evaluated samples.
         """
         super().__init__(
-            beta=beta,
-            model=model,
-            estimated_variance_train=estimated_variance_train,
+            beta=beta, model=model, estimated_variance_train=estimated_variance_train,
         )
 
     def forward(
         self,
         x_train: torch.Tensor,
         y_train: torch.Tensor,
+        y_posterior: Optional[torch.Tensor] = None,
         x_replicated: List[torch.Tensor] = None,
         convergence_measure: Optional[Union[float, np.ndarray]] = None,
     ) -> Union[torch.tensor, float]:
@@ -129,7 +126,9 @@ class NaiveSelector(Selector):
         Args:
             x_train (torch.Tensor): A `batch_shape x n x d` tensor of training features.
             y_train (torch.Tensor): A `batch_shape x n x m` tensor of training observations.
+            y_posterior (torch.Tensor): A `batch_shape x n x m` tensor of training observations.
             x_replicated (List[torch.Tensor]): The replicated samples.
+            convergence_measure (ConvergenceMeasure): The convergence measure to use in the selector.
 
         Returns:
             Union[torch.tensor, float]: The most likely parameter values that optimize the black box function.

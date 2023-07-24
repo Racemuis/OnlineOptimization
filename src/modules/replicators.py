@@ -30,6 +30,7 @@ class SequentialReplicator(Replicator):
         """
         self.horizon = horizon
         super(SequentialReplicator, self).__init__()
+        self.replicates = 0
 
     def forward(
         self,
@@ -59,7 +60,7 @@ class SequentialReplicator(Replicator):
         r_sample = torch.pow(model.get_estimated_std(x_proposed), 2)
 
         with torch.no_grad():
-            return self.rollout(
+            sample = self.rollout(
                 horizon=self.horizon,
                 x_train=x_train,
                 x_proposed=x_proposed[0],
@@ -67,6 +68,10 @@ class SequentialReplicator(Replicator):
                 r_proposed=r_sample,
                 model=model.get_model(),
             )
+
+            if torch.equal(sample, x_proposed):
+                self.replicates += 1
+            return sample
 
     def rollout(
         self,
@@ -590,10 +595,10 @@ class SequentialReplicator(Replicator):
         Return the unique values in x_train while preserving the order.
 
         Args:
-            x_train:
+            x_train (torch.tensor): A tensor of input data.
 
         Returns:
-
+            torch.Tensor: The input vector containing unique data points.
         """
         accepted_x = x_train[0]
         for x in x_train[1:]:
@@ -607,6 +612,7 @@ class SequentialReplicator(Replicator):
 class MaxReplicator(Replicator):
     def __init__(self):
         super().__init__()
+        self.replicates = 0
 
     def forward(
         self,
@@ -644,6 +650,7 @@ class MaxReplicator(Replicator):
             proposed_std = torch.sqrt(model.posterior(X=x_proposed).variance)
 
             if replicate_std > proposed_std:
+                self.replicates += 1
                 return x_train[y_max_idx].unsqueeze(0)
         return x_proposed
 
@@ -652,6 +659,7 @@ class FixedNReplicator(Replicator):
     def __init__(self, n_replications: int):
         super().__init__()
         self.n_replications = n_replications
+        self.replicates = 0
 
     def forward(
             self,
@@ -660,4 +668,5 @@ class FixedNReplicator(Replicator):
             y_train: Optional[torch.Tensor] = None,
             model: Optional[RegressionModel] = None,
     ) -> torch.Tensor:
+        self.replicates += 5
         return x_proposed.repeat(self.n_replications, 1)

@@ -399,8 +399,6 @@ class MostLikelyHeteroskedasticGP(RegressionModel):
         ax0 = plot_GP(
             x_train=x_train.cpu().numpy(), y_train=y_train.cpu().numpy(), x_test=x_test, model=composite_model, ax=ax0
         )
-        # ax0.axvline(maximum, color="r", linewidth=0.3, label="global maximum")
-        # ax0.plot(x_test.numpy(), f(x_test.numpy()), color="black", linestyle="dashed", linewidth=0.6, label="f(x)")
         ax0.set_title(
             f"Most-likely GP regression\n{random_sample_size} "
             f"random samples, {informed_sample_size} informed samples"
