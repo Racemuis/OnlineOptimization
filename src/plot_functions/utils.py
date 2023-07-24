@@ -197,10 +197,11 @@ def plot_GP_1d(
         ax.fill_between(
             x_test, posterior_mean - r_x, posterior_mean + r_x, alpha=0.6, color="gray", label=r"$r(x)$", zorder=0,
         )
-    ax.set_ylabel(ylabel)
-    ax.set_xlabel(xlabel)
+    if ylabel is not None:
+        ax.set_ylabel(ylabel)
+    if xlabel is not None:
+        ax.set_xlabel(xlabel)
     ax.set_title(title)
-    plt.legend()
 
     if path is not None:
         plt.savefig(path, bbox_inches="tight")
