@@ -1,3 +1,8 @@
+# Translated from R (https://CRAN.R-project.org/package=hetGP) to python
+# Authors: Binois, M., Gramacy, R., Ludkovski, M
+
+# FILE LICENSE (and for this file only): GNU LPGL-2
+
 import numpy as np
 
 

@@ -5,7 +5,6 @@ import numpy as np
 import torch
 
 from botorch.acquisition import AcquisitionFunction
-from botorch.models.model import Model
 from botorch.models.gpytorch import BatchedMultiOutputGPyTorchModel
 
 
@@ -77,6 +76,9 @@ class RegressionModel(ABC):
     ):
         ...
 
+    def posterior(self, x_train: torch.Tensor):
+        pass
+
 
 class Initializer(ABC):
     def __init__(self, domain: np.ndarray):
@@ -105,6 +107,7 @@ class Selector(ABC):
         self,
         x_train: torch.Tensor,
         y_train: torch.Tensor,
+        y_posterior: torch.Tensor,
         x_replicated: Optional[List[torch.Tensor]],
         convergence_measure: Optional[Union[float, np.ndarray]],
     ) -> Union[torch.tensor, float]:

@@ -1,5 +1,8 @@
+from typing import Type
+
 from enum import Enum
 from src import modules
+from src.utils import base
 from src.modules.models import gaussian_processes, trees
 
 
@@ -21,28 +24,45 @@ class ConvergenceMeasure(ExtendedEnum):
     NONE = "None"
 
 
-initializers = {
-    "random": modules.initializers.Random,
-    "sobol": modules.initializers.Sobol,
-}
-
-    
-replicators = {
-    "fixed_n": modules.replicators.FixedNReplicator(n_replications=5),
-    "max": modules.replicators.MaxReplicator(),
-    "sequential": modules.replicators.SequentialReplicator(horizon=2)
-}
+def initializers(i: str) -> Type[base.Initializer]:
+    d = {
+        "random": modules.initializers.Random,
+        "sobol": modules.initializers.Sobol,
+    }
+    return d[i]
 
 
-regression_models = {
-    "Random forest regression": trees.RandomForestWrapper(n_estimators=10, random_state=44),
-    "Gaussian process regression": gaussian_processes.MostLikelyHeteroskedasticGP(normalize=False),
-    "Random sampling": None,
-}
+def replicators(r: str) -> base.Replicator:
+    d = {
+        "fixed_n": modules.replicators.FixedNReplicator(n_replications=5),
+        "max": modules.replicators.MaxReplicator(),
+        "sequential": modules.replicators.SequentialReplicator(horizon=2),
+        "None": None,
+    }
+    return d[r]
 
 
-selectors = {
-    "variance": modules.selectors.VarianceSelector,
-}
+def regression_models(rm: str) -> base.RegressionModel:
+    d = {
+        "Random forest regression": trees.RandomForestWrapper(n_estimators=10, random_state=44),
+        "Gaussian process regression": gaussian_processes.MostLikelyHeteroskedasticGP(normalize=True),
+        "Random sampling": None,
+    }
+    return d[rm]
+
+
+def selectors(s: str) -> Type[base.Selector]:
+    d = {
+        "variance": modules.VarianceSelector,
+    }
+    return d[s]
+
+
+def acquisition(a: str) -> Type[base.AcquisitionFunction]:
+    d = {
+        "variance": modules.BoundedUpperConfidenceBoundVar,
+        "ucb": modules.BoundedUpperConfidenceBound
+    }
+    return d[a]
 
 
