@@ -124,11 +124,11 @@ def main():
 
     ax2[-1, -1].legend(title=r"$\beta$", ncols=2, fontsize=6)
     fig2.tight_layout()
-    fig2.savefig(f"./analyze_beta_auc_d{d}.pdf", bbox_inches='tight')
-
-    axes[-1, -1].legend()
     path = r"./results"
     Path(path).mkdir(parents=True, exist_ok=True)
+    fig2.savefig(os.path.join(path, f"./analyze_beta_auc_d{d}.pdf"), bbox_inches='tight')
+
+    axes[-1, -1].legend()
     fig.suptitle(rf"Optimization of $\beta$, dimensionality: {d}")
     if auc:
         fig.savefig(os.path.join(path, f"./analyze_beta_d{d}.pdf"), bbox_inches='tight')
