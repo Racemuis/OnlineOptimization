@@ -12,11 +12,11 @@ plt.rcParams.update({"font.size": 14})
 
 
 def paraboloid(x, y, z, a, b):
-    x = (x - np.min(x))/(np.max(x)-np.min(x))
+    x = (x - np.min(x)) / (np.max(x) - np.min(x))
     x = (x - 0.5) * 4
     y = (y - np.min(y)) / (np.max(y) - np.min(y))
     y = (y - 0.5) * 4
-    p = -0.1*(x ** 2 / a ** 2 + y ** 2 / b ** 2 - a) + 0.2 + z
+    p = -0.1 * (x ** 2 / a ** 2 + y ** 2 / b ** 2 - a) + 0.2 + z
     p[p < 0] = 0
     p[p > 1] = 1
 
@@ -78,7 +78,7 @@ def plot_figure(
 def main():
     superimpose_parabola = True
     participants = ["VPpblz_15_08_14", "VPpboa_15_08_11", "VPpbob_15_08_13", "VPpboc_15_08_17"]
-    Path(r"space_results").mkdir(parents=True, exist_ok=True)
+    Path(r"../space_results").mkdir(parents=True, exist_ok=True)
 
     for participant in participants:
         path = (
@@ -89,12 +89,20 @@ def main():
 
         # plot shrinkage parameter vs offset
         plot_figure(
-            df=df[df["interval"] == 0.08], x_label="shrinkage_parameter", y_label="offset", participant=participant, superimpose_parabola=superimpose_parabola
+            df=df[df["interval"] == 0.08],
+            x_label="shrinkage_parameter",
+            y_label="offset",
+            participant=participant,
+            superimpose_parabola=superimpose_parabola,
         )
 
         # plot shrinkage parameter vs interval
         plot_figure(
-            df=df[df["offset"] == 0.1], x_label="shrinkage_parameter", y_label="interval", participant=participant, superimpose_parabola=superimpose_parabola,
+            df=df[df["offset"] == 0.1],
+            x_label="shrinkage_parameter",
+            y_label="interval",
+            participant=participant,
+            superimpose_parabola=superimpose_parabola,
         )
 
         # plot offset vs interval
@@ -103,52 +111,8 @@ def main():
             x_label="offset",
             y_label="interval",
             participant=participant,
-            superimpose_parabola=superimpose_parabola
+            superimpose_parabola=superimpose_parabola,
         )
-
-        # # combined plot
-        # fig, axes = plt.subplots(1, 3, subplot_kw={"projection": "3d"})
-        # # plot shrinkage parameter vs offset
-        # axes[0], _ = plot_figure(
-        #     df=df[df["interval"] == 0.08],
-        #     x_label="shrinkage_parameter",
-        #     y_label="offset",
-        #     participant=participant,
-        #     ax=axes[0],
-        #     superimpose_parabola=superimpose_parabola,
-        # )
-        #
-        # # plot shrinkage parameter vs interval
-        # axes[1], _ = plot_figure(
-        #     df=df[df["offset"] == 0.1],
-        #     x_label="shrinkage_parameter",
-        #     y_label="interval",
-        #     participant=participant,
-        #     ax=axes[1],
-        #     superimpose_parabola=superimpose_parabola,
-        # )
-        #
-        # # plot offset vs interval
-        # axes[2], surf = plot_figure(
-        #     df=df[df["shrinkage_parameter"] == 0],
-        #     x_label="offset",
-        #     y_label="interval",
-        #     participant=participant,
-        #     ax=axes[2],
-        #     superimpose_parabola=superimpose_parabola,
-        # )
-        #
-        # fig.suptitle(f"Participant {participant}")
-        # fig.colorbar(surf, ax=axes.ravel().tolist())
-        # fig.savefig(f"./space_results/all_{participant}.pdf", bbox_inches="tight")
-        #
-        # a = np.array([[0.5, 0.8]])
-        # plt.figure(figsize=(9, 1.5))
-        # _ = plt.imshow(a, cmap="coolwarm")
-        # plt.gca().set_visible(False)
-        # cax = plt.axes([0.1, 0.2, 0.8, 0.6])
-        # plt.colorbar(orientation="horizontal", cax=cax, label="AUC score", shrink=0.5)
-        # plt.savefig("./space_results/colorbar.pdf")
 
 
 if __name__ == "__main__":

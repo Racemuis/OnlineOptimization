@@ -1,19 +1,26 @@
 import os
+from pathlib import Path
 
 import pandas as pd
 import yaml
 import numpy as np
 import itertools
 
-from ..src.data.ERPSimulator import DataSimulator
-from ..src.data.CVEPSimulator import CVEPSimulator
+from src.data.ERPSimulator import DataSimulator
+from src.data.CVEPSimulator import CVEPSimulator
 
 
 def main() -> None:
+    """
+    Query the optimization landscape using grid search.
+
+    Returns:
+        None
+    """
     n_grid_samples = 20
     path = os.path.dirname(os.path.realpath(__file__))
-    conf = yaml.load(open(os.path.join(path, "src/conf/bo_config.yaml"), "r"), Loader=yaml.FullLoader)
-    data_config = yaml.load(open(os.path.join(path, "src/conf/data_config.yaml"), "r"), Loader=yaml.FullLoader)
+    conf = yaml.load(open(os.path.join(path, "../src/conf/bo_config.yaml"), "r"), Loader=yaml.FullLoader)
+    data_config = yaml.load(open(os.path.join(path, "../src/conf/data_config.yaml"), "r"), Loader=yaml.FullLoader)
 
     if conf["experiment"] == "auditory_aphasia":
         simulator = DataSimulator(
@@ -41,7 +48,9 @@ def main() -> None:
         results[i, :-1] = element
         results[i, -1] = simulator.sample(np.array([list(element)]), noise=False)
 
-    pd.DataFrame(results).to_csv(r"./space_search.csv", index=False, header=False)
+    path = r"./results"
+    Path(path).mkdir(exist_ok=True, parents=True)
+    pd.DataFrame(results).to_csv(os.path.join(path, r"./space_search.csv"), index=False, header=False)
 
 
 if __name__ == "__main__":

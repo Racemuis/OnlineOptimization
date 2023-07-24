@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -29,6 +30,12 @@ plt.rcParams["figure.dpi"] = 250
 
 
 def main():
+    """
+    Analyze the outcomes for the different beta values by creating trace plots.
+
+    Returns:
+        None
+    """
     auc = False
     d = 1
     betas = np.round(np.linspace(0, 1, 11), 3)
@@ -120,11 +127,13 @@ def main():
     fig2.savefig(f"./analyze_beta_auc_d{d}.pdf", bbox_inches='tight')
 
     axes[-1, -1].legend()
+    path = r"./results"
+    Path(path).mkdir(parents=True, exist_ok=True)
     fig.suptitle(rf"Optimization of $\beta$, dimensionality: {d}")
     if auc:
-        fig.savefig(f"./analyze_beta_d{d}.pdf", bbox_inches='tight')
+        fig.savefig(os.path.join(path, f"./analyze_beta_d{d}.pdf"), bbox_inches='tight')
     else:
-        fig.savefig(f"./analyze_beta_best_found_d{d}.pdf", bbox_inches='tight')
+        fig.savefig(os.path.join(path, f"./analyze_beta_best_found_d{d}.pdf"), bbox_inches='tight')
 
 
 if __name__ == "__main__":

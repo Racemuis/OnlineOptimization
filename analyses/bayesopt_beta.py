@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 import torch
 import numpy as np
@@ -27,8 +28,13 @@ plt.rcParams["figure.dpi"] = 250
 
 
 def main():
-    # Set hyperparameters
+    """
+    Plot the results of the Bayesian optimization process to find beta.
 
+    Returns:
+        None
+    """
+    # Set hyperparameters
     NUM_COLORS = 4
     LINE_STYLES = ['solid', 'dashed', 'dashdot', 'dotted']
     NUM_STYLES = len(LINE_STYLES)
@@ -139,7 +145,9 @@ def main():
                    fancybox=False, shadow=False, ncol=5, handles=lines,
                    labels=labels)
         plt.tight_layout()
-        fig.savefig(f"./bayesopt_beta_{p}.pdf", bbox_inches='tight')
+        path = r"./results"
+        Path(path).mkdir(exist_ok=True, parents=True)
+        fig.savefig(os.path.join(path, f"./bayesopt_beta_{p}.pdf"), bbox_inches='tight')
     print(np.mean(maxes))
 
 

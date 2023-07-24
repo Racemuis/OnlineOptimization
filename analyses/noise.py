@@ -1,5 +1,6 @@
 import os
 import yaml
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -7,7 +8,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 
-from src.data.DataSimulator import DataSimulator
+from src.data.ERPSimulator import DataSimulator
 
 import warnings
 
@@ -16,12 +17,18 @@ warnings.simplefilter(action="ignore", category=RuntimeWarning)
 
 
 def main():
+    """
+    Assess the degree of sampling noise by using grid search.
+
+    Returns:
+        None
+    """
     n_samples = 500
 
     # read yaml
     path = os.path.dirname(os.path.realpath(__file__))
-    conf = yaml.load(open(os.path.join(path, "src/conf/bo_config.yaml"), "r"), Loader=yaml.FullLoader)
-    data_config = yaml.load(open(os.path.join(path, "src/conf/data_config.yaml"), "r"), Loader=yaml.FullLoader)
+    conf = yaml.load(open(os.path.join(path, "../src/conf/bo_config.yaml"), "r"), Loader=yaml.FullLoader)
+    data_config = yaml.load(open(os.path.join(path, "../src/conf/data_config.yaml"), "r"), Loader=yaml.FullLoader)
 
     simulator = DataSimulator(data_config=data_config, bo_config=conf, noise_function=None, )
 
@@ -30,7 +37,9 @@ def main():
     for i, g in enumerate(tqdm(grid, desc="Performing grid evaluation")):
         results[:, i] = simulator.sample(np.array([[g]]*n_samples), noise=True)
 
-    pd.DataFrame(data=results, columns=grid).to_csv(f"./results_{conf['participant']}.csv")
+    path = r"./results"
+    Path(path).mkdir(exist_ok=True, parents=True)
+    pd.DataFrame(data=results, columns=grid).to_csv(os.path.join(path, f"./results_{conf['participant']}.csv"))
 
     mean = np.mean(results, axis=0)
     std = np.std(results, axis=0)
