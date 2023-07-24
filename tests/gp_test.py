@@ -3,7 +3,7 @@ import numpy as np
 
 import matplotlib.pyplot as plt
 
-from src.modules.models import RandomForestWrapper
+from src.modules.models import MostLikelyHeteroskedasticGP
 
 import warnings
 
@@ -22,7 +22,7 @@ torch.manual_seed(0)
 
 def main():
     """
-    Test the RandomForestWrapper model.
+    Test the MostLikelyHeteroskedasticGP model.
 
     Returns:
         None.
@@ -41,12 +41,12 @@ def main():
     y_train = np.random.normal(loc, scale)
 
     # Fit the Gaussian process
-    forest = RandomForestWrapper(n_estimators=10)
-    forest.fit(x_train[:, np.newaxis], y_train[:, np.newaxis])
+    gp = MostLikelyHeteroskedasticGP(normalize=True, n_iter=1)
+    model = gp.fit(x_train=torch.tensor(x_train)[:, np.newaxis], y_train=torch.tensor(y_train)[:, np.newaxis])
 
     # Get posterior mean and std
-    mu = forest.posterior(torch.tensor(x_train)[:, np.newaxis]).mean.detach().numpy().squeeze()
-    std = forest.get_estimated_std(torch.tensor(x_train)[:, np.newaxis]).detach().numpy().squeeze()
+    mu = model.posterior(torch.tensor(x_train)[:, np.newaxis]).mean.detach().numpy().squeeze()
+    std = np.sqrt(model.posterior(torch.tensor(x_train)[:, np.newaxis]).variance.detach().numpy()).squeeze()
 
     # Plot the distribution
     fig, axes = plt.subplots(3, 1, sharex='all')
@@ -56,14 +56,14 @@ def main():
     axes[0].fill_between(
         x_train, mu - 1.96 * std, mu + 1.96 * std, color="tab:blue", alpha=0.2, label="95% confidence interval"
     )
-    axes[0].set_title(r"Variance estimation with Random forest regression")
+    axes[0].set_title(r"Variance estimation with Gaussian Process regression")
     axes[0].legend()
 
     axes[1].plot(x_train, scale)
     axes[1].set_title("True standard deviation: r(x)")
     axes[2].plot(
         x_train,
-        std,
+        gp.get_estimated_std(x_train=torch.tensor(x_train)[:, np.newaxis]).cpu().detach().numpy(),
         label="estimated standard deviation",
     )
     axes[2].set_title("Estimated standard deviation: $\hat{r}(x)$")
