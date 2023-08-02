@@ -10,7 +10,43 @@ The software is built on several dependencies that need to be installed prior to
 
 If desired, support for a virtual `poetry` environment could be added too. As of now, this functionality is not supported. 
 
-## Framework
+## Getting started
+The optimization algorithm that is used in this project is defined in the `Optimizer` class (`src/optimization/optimizer.py`). The optimizer, optimizing some simulated function on the domain [0, 1] can be called as follows:
+
+```python
+from src.optimization import Optimizer
+
+# Define hyperparameters
+random_sample_size =    # some integer
+informed_sample_size =  # some integer
+simulator =             # A source that can be evaluated
+
+# Create optimizer
+opt = Optimizer(
+                n_random_samples=random_sample_size,
+                domain=[[0], [1]],
+                initializer="sobol",
+                acquisition="ucb",
+                selector="variance",
+                regression_model="Gaussian process regression",
+                beta=0.4,
+            )
+
+for i in range(random_sample_size + informed_sample_size):
+    # Sample a newly proposed position from the BO
+    sample = opt.query(n_samples=1)
+
+    # Evaluate the sample
+    outcome = simulator.sample(sample, noise=True)
+
+    # Inform the BO process
+    opt.inform(sample, outcome)
+
+# Get the final verdict
+guess = opt.select().detach().numpy()
+```
+For a more elaborate example including the simulation of a BCI experiment, I'd like to refer the reader to `evaluate_subjects.py`.
+## Theory
 This repository provides an implementation of an optimization pipeline, which aims to find the parameter values that optimize an unknown objective function. 
 ### General problem domain
 Suppose that we would like to optimize a function $f(x)$ for which there is neither information about the gradient, nor an analytical expression for the optimum available. Furthermore, consider that the evaluation of $f(x)$ is _noisy_, i.e.
@@ -18,8 +54,6 @@ Suppose that we would like to optimize a function $f(x)$ for which there is neit
 $$y(x) = f(x) + \mathcal{N}(0, \varepsilon)$$
 
 where $y(x)$ is the evaluated value for the parameters $x$, and $\varepsilon$ is the unknown variance of the (normally) distributed noise that is superimposed on our objective function $f(x)$. If $f(x)$ is expensive to evaluate, we wish to make the search for the optimal values of $x$ as effective as possible. To that end, (different variations) of **Bayesian optimization** and **evolutionary computing** have been proposed.
-
-_Currently, this code base merely provides support for Bayesian optimization techniques. Evolutionary algorithms will be added if time allows it._
 
 ### Optimization pipeline
 The Bayesian optimization algorithm consists out of two main components:
@@ -38,6 +72,8 @@ The interplay between the modules is described in the figure below.
 <p align="center">
 <img src="figures/design_diagram.png">
 </p>
+
+All modules can be found in the `src/modules/` folder.
 
 #### Initial sampling
 To gather the initial training data for the statistical model, (quasi-)random values are sampled from the space from $x$ and evaluated. Currently, the following samplers are supported:
@@ -65,12 +101,16 @@ Replicators use a roll-out strategy to decide whether to sample a new value, or 
 Selectors the modules that select the sample that is the most likely to optimize the objective function. Currently supported selectors are:
 
 - `SimpleSelector`, makes a verdict by combining the values of $y(x)$ and the variance that is estimated by the statistical model.
-- `AveragingSelector`, a selector that averages the values of the `x's` that, according to the regression model, are close to the optimum. The selector uses `DBSCAN` to cluster the evaluated samples prior to calculating the average. The average is weighted by the inverse variance that is estimated by the regression model. 
+- `Variance`, a selector that can use the convergence measures `length_scale` and `mse` to weigh the posterior mean of the surrogate model and the observed samples. 
 
-#### Sources
-The source module represents the source whereto queries can be made to evaluate samples. Currently supported sources are:
+#### Simulators
+The simulator modules represent the source whereto queries can be made to evaluate samples. Currently supported sources are:
 
-- `Simulator`, a source that is able to simulate different objective functions, with flexible superimposed noise values. 
+- `ERPSimulator`, a source that is able to simulate ERP data.
+- `CVEPSimulator`, a source that is used to simulate CVEP data. This source is not completely bug-free. 
+
+The simulators can be found in the folder `src/data/`
+
 ***
 **Features**
 - Modularity
