@@ -117,7 +117,7 @@ The simulators can be found in the folder `src/data/`
 - Scales to any dimension
 ***
 ## References
-[1] I.M Sobol, "On the distribution of points in a cube and the approximate evaluation of integrals", _USSR Computational Mathematics and Mathematical Physics_, Volume 7, Issue 4, 1967, Pages 86-112, ISSN 0041-5553, https://doi.org/10.1016/0041-5553(67)90144-9.
-[2] Kristian Kersting, Christian Plagemann, Patrick Pfaff, and Wolfram Burgard. 2007. Most likely heteroscedastic Gaussian process regression. In _Proceedings of the 24th international conference on Machine learning (ICML '07)_. Association for Computing Machinery, New York, NY, USA, 393–400. https://doi.org/10.1145/1273496.1273546
-[3] Frank Hutter, Lin Xu, Holger H. Hoos, Kevin Leyton-Brown, Algorithm runtime prediction: Methods & evaluation, _Artificial Intelligence_, Volume 206, 2014, Pages 79-111, ISSN 0004-3702, https://doi.org/10.1016/j.artint.2013.10.003.
-[4] Mickaël Binois, Jiangeng Huang, Robert B. Gramacy & Mike Ludkovski (2019) Replication or Exploration? Sequential Design for Stochastic Simulation Experiments, _Technometrics_, 61:1, 7-23, DOI: 10.1080/00401706.2018.1469433
+[1] I.M Sobol, "On the distribution of points in a cube and the approximate evaluation of integrals", _USSR Computational Mathematics and Mathematical Physics_, Volume 7, Issue 4, 1967, Pages 86-112, ISSN 0041-5553, https://doi.org/10.1016/0041-5553(67)90144-9. <br>
+[2] Kristian Kersting, Christian Plagemann, Patrick Pfaff, and Wolfram Burgard. 2007. Most likely heteroscedastic Gaussian process regression. In _Proceedings of the 24th international conference on Machine learning (ICML '07). Association for Computing Machinery, New York, NY, USA, 393–400. https://doi.org/10.1145/1273496.1273546 <br>
+[3] Frank Hutter, Lin Xu, Holger H. Hoos, Kevin Leyton-Brown, Algorithm runtime prediction: Methods & evaluation, _Artificial Intelligence_, Volume 206, 2014, Pages 79-111, ISSN 0004-3702, https://doi.org/10.1016/j.artint.2013.10.003. <br>
+[4] Mickaël Binois, Jiangeng Huang, Robert B. Gramacy & Mike Ludkovski (2019) Replication or Exploration? Sequential Design for Stochastic Simulation Experiments, _Technometrics_, 61:1, 7-23, DOI: 10.1080/00401706.2018.1469433 <br>
