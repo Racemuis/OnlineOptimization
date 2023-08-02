@@ -46,7 +46,11 @@ for i in range(random_sample_size + informed_sample_size):
 guess = opt.select().detach().numpy()
 ```
 For a more elaborate example including the simulation of a BCI experiment, I'd like to refer the reader to `evaluate_subjects.py`.
-## Theory
+
+## Results and analyses
+The analyses that have been performed in the thesis are based on the scripts that can be found in the `analyses/` folder. Furthermore, the figures from the thesis that do not directly relate to any analysis can be found in the `figures/` folder. 
+
+## Theoretical background
 This repository provides an implementation of an optimization pipeline, which aims to find the parameter values that optimize an unknown objective function. 
 ### General problem domain
 Suppose that we would like to optimize a function $f(x)$ for which there is neither information about the gradient, nor an analytical expression for the optimum available. Furthermore, consider that the evaluation of $f(x)$ is _noisy_, i.e.
