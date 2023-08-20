@@ -44,6 +44,7 @@ def replicators(r: str) -> base.Replicator:
 
 def regression_models(rm: str) -> base.RegressionModel:
     d = {
+        "homGP": gaussian_processes.HomGP(normalize=True),
         "Random forest regression": trees.RandomForestWrapper(n_estimators=10, random_state=44),
         "Gaussian process regression": gaussian_processes.MostLikelyHeteroskedasticGP(normalize=True),
         "Random sampling": None,

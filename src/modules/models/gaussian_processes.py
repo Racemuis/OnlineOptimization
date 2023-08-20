@@ -29,6 +29,122 @@ from gpytorch.kernels.matern_kernel import MaternKernel
 from gpytorch.kernels.scale_kernel import ScaleKernel
 
 
+class HomGP(RegressionModel):
+    def __init__(
+        self,
+        input_transform: Optional[InputTransform] = None,
+        outcome_transform: Optional[OutcomeTransform] = None,
+        normalize: Optional[bool] = False,
+    ):
+        self.normalize = normalize
+        super().__init__(input_transform, outcome_transform)
+        self.model = None
+
+    def get_estimated_std(self, x_train: torch.Tensor) -> torch.Tensor:
+        return torch.sqrt(torch.tensor([self.model.likelihood.noise.item()])).repeat(x_train.shape[0])
+
+    def get_posterior_std(self, x_train: torch.Tensor) -> torch.Tensor:
+        self.model.eval()
+        return torch.sqrt(self.model.posterior(x_train).variance)
+
+    @property
+    def with_grad(self) -> bool:
+        return True
+
+    @property
+    def num_outputs(self):
+        return self.model.num_outputs
+
+    def posterior(
+        self,
+        X: torch.Tensor,
+        output_indices: Optional[List[int]] = None,
+        observation_noise: bool = False,
+        posterior_transform: Optional[PosteriorTransform] = None,
+        **kwargs: Any,
+    ):
+        """
+        Computes the posterior over model outputs at the provided points.
+
+        Note: The input transforms should be applied here using
+            `self.transform_inputs(X)` after the `self.eval()` call and before
+            any `model.forward` or `model.likelihood` calls.
+
+        Args:
+            X: A `b x q x d`-dim Tensor, where `d` is the dimension of the
+                feature space, `q` is the number of points considered jointly,
+                and `b` is the batch dimension.
+            output_indices: A list of indices, corresponding to the outputs over
+                which to compute the posterior (if the model is multi-output).
+                Can be used to speed up computation if only a subset of the
+                model's outputs are required for modules. If omitted,
+                computes the posterior over all model outputs.
+            observation_noise: If True, add observation noise to the posterior.
+            posterior_transform: An optional PosteriorTransform.
+
+        Returns:
+            A `Posterior` object, representing a batch of `b` joint distributions
+            over `q` points and `m` outputs each.
+        """
+        if self.model is None:
+            print("The model has not been initialized yet. Consider training the models first.")
+            return None
+
+        else:
+            self.model.eval()
+            return self.model.posterior(
+                X=X,
+                output_indices=output_indices,
+                observation_noise=observation_noise,
+                posterior_transform=posterior_transform,
+                kwargs=kwargs,
+            )
+
+    def get_model(self) -> FixedNoiseGP:
+        """
+        Getter function for the main model.
+
+        Returns:
+            FixedNoiseGP: The fitted "Most likely" model.
+        """
+        if self.model is None:
+            print("The model has not been initialized yet. Consider training the models first.")
+        return self.model
+
+    def fit(self, x_train: torch.Tensor, y_train: torch.Tensor) -> SingleTaskGP:
+
+        if self.normalize:
+            self.input_transform = transforms.input.Normalize(d=x_train.shape[-1])
+            self.outcome_transform = transforms.outcome.Standardize(m=y_train.shape[-1])
+
+        covar_module = ScaleKernel(
+            MaternKernel(nu=2.5, ard_num_dims=x_train.shape[-1], lengthscale_prior=GammaPrior(3.5, 2.0),),
+            outputscale_prior=GammaPrior(2.0, 0.5),
+        )
+        self.model = SingleTaskGP(
+            x_train,
+            y_train,
+            # input_transform=self.input_transform,
+            # outcome_transform=self.outcome_transform,
+            covar_module=covar_module,
+        )
+        return self.model
+
+    def plot(
+        self,
+        x_train: Any,
+        y_train: Any,
+        var_true: Any,
+        maximum: float,
+        f: Callable,
+        domain: np.ndarray,
+        random_sample_size: int,
+        informed_sample_size: int,
+        acquisition_function: Optional[AcquisitionFunction],
+    ):
+        pass
+
+
 class MostLikelyHeteroskedasticGP(RegressionModel):
     """
     The implementation of the heteroskedastic Gaussian process regression as proposed in [1]. The model accounts
@@ -443,5 +559,4 @@ class MostLikelyHeteroskedasticGP(RegressionModel):
         ax2.legend(bbox_to_anchor=(1.01, 0.0), loc="lower left", ncols=1, borderaxespad=0.0)
         plt.tight_layout()
         plt.show()
-        fig1.savefig("./modules.pdf", bbox_inches='tight')
-
+        fig1.savefig("./modules.pdf", bbox_inches="tight")
